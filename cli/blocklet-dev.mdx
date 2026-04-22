@@ -1,0 +1,186 @@
+---
+title: "blocklet dev — Run a Blocklet in Development Mode"
+description: "Start your blocklet on a local Blocklet Server in development mode, with live process management, log streaming, and hot reload via your own build tooling."
+---
+
+The `blocklet dev` command installs the current directory's blocklet on the connected Blocklet Server in development mode and starts it. Unlike a production deployment, `blocklet dev` mounts the local source directory directly — so you can use your own build tooling (Vite, Webpack, `tsc --watch`, etc.) for hot reload while the server manages routing, DID authentication, and inter-blocklet communication. When you stop the command, the development instance is automatically removed from the server.
+
+## Prerequisites
+
+Blocklet Server must be running before you use `blocklet dev`. Start it with:
+
+```bash
+blocklet server start
+```
+
+## Usage
+
+```bash
+blocklet dev [options]
+```
+
+Run this command from your blocklet project root (the directory containing `blocklet.yml`).
+
+## Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--open` | `false` | Open the blocklet URL in your default browser once the blocklet has started |
+| `--app-id <did>` | — | Develop this blocklet as a component inside an existing app; provide the parent app's DID |
+| `--app-did <did>` | — | Deprecated alias for `--app-id` |
+| `--mount-point <mountPoint>` | `/` (standalone) or _(from env)_ | URL path at which the component is mounted inside the parent app |
+| `--store-url <storeUrl>` | — | Default store URL used when a component's source store is not declared in `blocklet.yml` |
+| `--start-all-components` | `false` | Auto-start all components in the blocklet, not just the one under development |
+
+## Subcommands
+
+`blocklet dev` has several subcommands for managing the development lifecycle independently.
+
+| Subcommand | Description |
+|------------|-------------|
+| `blocklet dev install` | Install in dev mode without starting |
+| `blocklet dev remove` | Remove the dev-mode instance |
+| `blocklet dev reset` | Clear blocklet data (alias: `blocklet dev clear`) |
+| `blocklet dev studio` | Open the Blocklet Studio UI |
+| `blocklet dev faucet` | Fund the blocklet app with test tokens |
+
+### `blocklet dev faucet`
+
+```bash
+blocklet dev faucet [--host <url>] [--token <symbol>]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--host <host>` | `https://faucet.abtnetwork.io` | Faucet service URL |
+| `--token <token>` | — | Token symbol or address to claim |
+
+## Environment variables
+
+| Variable | Description |
+|----------|-------------|
+| `BLOCKLET_DEV_APP_DID` | Fallback for `--app-id` when the flag is not set |
+| `BLOCKLET_DEV_MOUNT_POINT` | Fallback mount point when `--mount-point` is not set and `--app-id` is given |
+| `COMPONENT_STORE_URL` | Fallback store URL when `--store-url` is not set |
+
+## Development workflow
+
+<Steps>
+  <Step title="Start Blocklet Server">
+    Make sure the server is running in a separate terminal.
+
+    ```bash
+    blocklet server start
+    ```
+  </Step>
+  <Step title="Start your build watcher">
+    In one terminal, run your bundler in watch mode — for example:
+
+    ```bash
+    npm run dev
+    # or: vite, tsc --watch, webpack --watch, etc.
+    ```
+  </Step>
+  <Step title="Start blocklet dev">
+    In another terminal, from your project root:
+
+    ```bash
+    blocklet dev --open
+    ```
+
+    The CLI installs the blocklet on the server, starts it, and prints the access URL. With `--open`, the URL opens in your browser automatically.
+  </Step>
+  <Step title="Iterate">
+    Edit your source files. Your build watcher recompiles; the blocklet process picks up changes automatically or you restart the process as needed.
+  </Step>
+  <Step title="Stop">
+    Press `Ctrl+C` in the `blocklet dev` terminal. The CLI removes the dev-mode instance from the server and exits cleanly.
+  </Step>
+</Steps>
+
+## Developing as a component
+
+If your blocklet is designed to run as a component inside a larger app (a "composite blocklet"), pass the parent app's DID via `--app-id`:
+
+```bash
+blocklet dev --app-id zNKr34afd... --mount-point /my-tool
+```
+
+The CLI checks for mount-point conflicts with existing components before installing. If another component already occupies the same path, the command exits with an error.
+
+## Examples
+
+```bash
+# Start dev mode (standalone blocklet)
+blocklet dev
+
+# Open browser automatically after start
+blocklet dev --open
+
+# Develop as a component inside an existing app
+blocklet dev --app-id zNKr34afd... --mount-point /my-tool
+
+# Use a custom store for resolving component dependencies
+blocklet dev --store-url https://store.blocklet.dev
+
+# Start all components in the blocklet, not just the one being developed
+blocklet dev --start-all-components
+```
+
+## `blocklet bundle`
+
+Before deploying to production you need to package your blocklet into a deployable bundle. The `blocklet bundle` command creates a self-contained archive in `.blocklet/bundle`.
+
+### Usage
+
+```bash
+blocklet bundle [options]
+```
+
+Run this from your project root after your production build is complete.
+
+### Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--zip` | `true` | Bundle using zip mode (default for static and unclassified blocklets) |
+| `--simple` | `false` | Bundle using simple mode |
+| `--compact` | `false` | Bundle using compact mode, including all Node.js dependencies |
+| `--dependencies-depth <number>` | `9` | Depth of the dependency tree to include (compact mode only) |
+| `--source-map` | `false` | Emit source maps (compact mode only) |
+| `--nosources-source-map <boolean>` | `false` | Emit source maps without source content (compact mode only) |
+| `--minify` / `--no-minify` | `true` | Minify output (compact mode only) |
+| `--external <items>` | `[]` | Comma-separated list of dependencies to treat as external |
+| `--create-release` | `false` | Generate a release tarball and `blocklet.json` manifest alongside the bundle |
+| `--create-archive` | `false` | Create a `.zip` archive of the bundle |
+| `--monorepo` | `false` | Bundle a blocklet that lives inside a monorepo |
+| `--changelog` / `--no-changelog` | `true` | Include or exclude `CHANGELOG.md` from the bundle |
+| `--store-url <storeUrl>` | — | Default store URL when component source store is not declared |
+
+### Bundle modes
+
+| Mode | When used | Description |
+|------|-----------|-------------|
+| `zip` | Static blocklets, unclassified | Zips the build output as-is |
+| `simple` | Gateway blocklets | Packages files without bundling Node.js dependencies |
+| `compact` | Node.js blocklets that need a self-contained artifact | Bundles all dependencies into the output |
+
+The mode is selected automatically based on the `group` field in `blocklet.yml`. Use `--zip`, `--simple`, or `--compact` to override.
+
+### Example
+
+```bash
+# Build first, then bundle
+npm run build
+blocklet bundle
+
+# Bundle and create a release tarball in one step
+blocklet bundle --create-release
+
+# Compact bundle with source maps (for Node.js blocklets)
+blocklet bundle --compact --source-map
+```
+
+<Tip>
+After bundling, run `blocklet deploy .blocklet/bundle --app-id <did>` to push the bundle to Blocklet Server. See the [blocklet deploy](/cli/blocklet-deploy) reference for details.
+</Tip>

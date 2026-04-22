@@ -1,0 +1,224 @@
+---
+title: "Installation: Docker, npm, and building from source"
+description: "Complete installation guide for Blocklet Server covering system requirements, Docker registries, npm CLI setup, source builds, and supported platforms."
+---
+
+Blocklet Server can be installed in three ways: via Docker (the recommended approach for most environments), via the `@blocklet/cli` npm package, or built from source for contributors and advanced users. This page covers all three paths, plus system requirements and supported platforms.
+
+## System requirements
+
+| Requirement | Minimum | Recommended |
+|-------------|---------|-------------|
+| Node.js | 20.x | 22.x or later |
+| Memory | 2 GB RAM | 4 GB RAM or more |
+| Disk space | 10 GB | 50 GB or more |
+| OS | Linux, macOS, Windows (via Docker) | Linux (Ubuntu 20.04+) |
+
+### Supported platforms
+
+- **Linux**: Ubuntu 18.04+, Debian 10+, CentOS 7+
+- **macOS**: 10.15 (Catalina) and later
+- **Windows**: Windows 10+ via Docker Desktop or WSL2
+
+<Warning>
+  Native Windows installation is not supported. Use Docker Desktop with WSL2 backend, or run Blocklet Server inside a WSL2 Linux environment.
+</Warning>
+
+## Installation methods
+
+<Tabs>
+  <Tab title="Docker">
+    Docker is the recommended installation method. The image bundles all dependencies including nginx, so no additional system packages are required.
+
+    ### Pull the image
+
+    Blocklet Server images are published to three registries. Choose the one closest to your infrastructure:
+
+    <CodeGroup>
+
+    ```bash Docker Hub
+    docker pull arcblock/blocklet-server
+    ```
+
+    ```bash GitHub Container Registry
+    docker pull ghcr.io/arcblock/blocklet-server:latest
+    ```
+
+    ```bash AWS ECR
+    docker pull public.ecr.aws/i0s0w0c9/blocklet-server:latest
+    ```
+
+    </CodeGroup>
+
+    ### Run with persistent storage
+
+    Mount a local directory to `/data` so server state, installed Blocklets, and configuration survive container restarts:
+
+    ```bash
+    docker run -d \
+      -p 80:80 \
+      -p 443:443 \
+      -v /path/to/your/data:/data \
+      arcblock/blocklet-server
+    ```
+
+    The container exposes ports 80 (HTTP) and 443 (HTTPS). The entrypoint runs `blocklet server start -a --keep-alive` automatically.
+
+    <Tip>
+      For a quick local test, use `~/blocklet-data` as your data directory: `-v ~/blocklet-data:/data`
+    </Tip>
+
+    ### Docker Compose example
+
+    ```yaml docker-compose.yml
+    services:
+      blocklet-server:
+        image: arcblock/blocklet-server
+        ports:
+          - "80:80"
+          - "443:443"
+        volumes:
+          - blocklet-data:/data
+        restart: unless-stopped
+
+    volumes:
+      blocklet-data:
+    ```
+  </Tab>
+
+  <Tab title="npm (CLI)">
+    The npm path installs the `@blocklet/cli` package, which provides the `blocklet` command. This approach requires Node.js and nginx to be installed separately on your system.
+
+    ### Prerequisites
+
+    - Node.js 20.x or later
+    - nginx 1.18.0 or later
+    - Linux or macOS
+
+    ### Install the CLI
+
+    ```bash
+    npm install -g @blocklet/cli
+    ```
+
+    Confirm the installation:
+
+    ```bash
+    blocklet --version
+    ```
+
+    The current CLI version is `1.17.12` (`@blocklet/cli`).
+
+    ### Start the server
+
+    ```bash
+    blocklet server start -a
+    ```
+
+    The `-a` flag initializes the server automatically on first run. The server prints its dashboard URL on startup — open it in your browser to complete setup.
+
+    ### Stop the server
+
+    ```bash
+    blocklet server stop
+    ```
+  </Tab>
+
+  <Tab title="Build from source">
+    Build from source when contributing to Blocklet Server or when you need a custom build. This path requires additional tools beyond Node.js.
+
+    ### Prerequisites
+
+    | Tool | Version |
+    |------|---------|
+    | Node.js | v22+ |
+    | Bun | v1.3.6+ |
+    | lerna | latest |
+    | nginx | v1.18.0+ |
+
+    Install lerna globally if you do not have it:
+
+    ```bash
+    npm install -g lerna
+    ```
+
+    ### Clone and build
+
+    ```bash
+    git clone https://github.com/ArcBlock/blocklet-server.git
+    cd blocklet-server
+
+    # First time only: installs lerna + bun globally, then installs all dependencies
+    make init
+
+    # Build the full server (dashboard + daemon + all packages)
+    make build
+    ```
+
+    <Note>
+      `make init` combines `make install` (installs lerna and bun), `make dep` (installs npm dependencies and builds internal packages), and `make build-services`. Run it once on a fresh clone. On subsequent runs, `make dep` is sufficient.
+    </Note>
+
+    ### Link the CLI and start
+
+    Symlink the local CLI binary to your PATH:
+
+    ```bash
+    ln -sf $(pwd)/core/cli/bin/blocklet.js /usr/local/bin/bn
+    ```
+
+    Initialize and start the server from a new data directory:
+
+    ```bash
+    mkdir ~/my-blocklet-server && cd ~/my-blocklet-server
+    bn server init
+    bn server start
+    ```
+
+    Stop when done:
+
+    ```bash
+    bn server stop
+    ```
+
+    ### Development mode
+
+    For iterating on dashboard or daemon code with hot reloading, see the [development guide](https://github.com/ArcBlock/blocklet-server/blob/main/docs/development/getting-started.md). Development mode requires configuring a `.env.development` file in `core/webapp/` with your local IP, a generated secret key, and data directory path.
+  </Tab>
+</Tabs>
+
+## Platform notes
+
+### Linux
+
+All major distributions are supported. Ubuntu 20.04 LTS or later is recommended for production deployments. The Docker image is built on Alpine Linux and runs on `linux/amd64` and `linux/arm64` architectures.
+
+### macOS
+
+macOS 10.15 (Catalina) and later is supported for both Docker and npm installation paths. Use Docker Desktop for Mac or install Docker via Homebrew.
+
+### Windows
+
+<Warning>
+  Native Windows installation is not supported. Use one of the following approaches:
+</Warning>
+
+- **Docker Desktop**: Install Docker Desktop for Windows with the WSL2 backend enabled, then use the Docker installation path.
+- **WSL2**: Install Ubuntu or Debian inside WSL2, then follow the Linux npm or source installation steps.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Step-by-step guide to running Blocklet Server and installing your first Blocklet.
+  </Card>
+  <Card title="Docker guide" icon="docker" href="/guides/docker">
+    Production Docker configuration, networking, and volume management.
+  </Card>
+  <Card title="Environment variables" icon="gear" href="/reference/environment-variables">
+    Configure Blocklet Server behavior with `ABT_NODE_*` environment variables.
+  </Card>
+  <Card title="CLI reference" icon="terminal" href="/cli/server-init">
+    Full reference for `blocklet server init`, `start`, `stop`, and `status`.
+  </Card>
+</CardGroup>

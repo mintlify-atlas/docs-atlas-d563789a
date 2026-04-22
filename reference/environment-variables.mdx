@@ -1,0 +1,221 @@
+---
+title: 'ABT_NODE_* Environment Variable Reference'
+description: 'Complete reference for all ABT_NODE_* environment variables that control Blocklet Server behavior, organized by category with defaults and examples.'
+---
+
+Blocklet Server reads configuration from three sources in order of precedence: environment variables, the `config.yml` file, and built-in defaults. Environment variables always win, which makes them suitable for deployment-time overrides without touching configuration files on disk.
+
+<Note>
+  Configuration priority: **environment variables** take precedence over `config.yml`, which takes precedence over
+  built-in defaults. Set variables in your shell, Docker Compose file, or systemd unit before starting the server.
+</Note>
+
+<AccordionGroup>
+  <Accordion title="Network and Ports">
+    Configure the ports Blocklet Server and its subsystems listen on.
+
+    | Variable | Purpose | Default | Example |
+    |---|---|---|---|
+    | `ABT_NODE_PORT` | Main port for the server daemon | `8089` | `8080` |
+    | `ABT_NODE_SERVICE_PORT` | Internal service communication port | `40404` | `40405` |
+    | `ABT_NODE_BLOCKLET_PORT` | Starting port assigned to blocklet apps | `8090` | `8100` |
+    | `ABT_NODE_HTTP_PORT` | HTTP port for the gateway/router | `80` | `8080` |
+    | `ABT_NODE_HTTPS_PORT` | HTTPS port for the gateway/router | `443` | `8443` |
+    | `ABT_NODE_ROUTER_HTTP_PORT` | HTTP port for the router provider | Same as `ABT_NODE_HTTP_PORT` | `8080` |
+    | `ABT_NODE_ROUTER_HTTPS_PORT` | HTTPS port for the router provider | Same as `ABT_NODE_HTTPS_PORT` | `8443` |
+    | `ABT_NODE_UPDATER_PORT` | Port for the updater service | `40405` | `40406` |
+    | `ABT_NODE_EVENT_PORT` | Port for event hub communication | `40407` | `40408` |
+    | `ABT_NODE_HOST` | Host address the server binds to | `0.0.0.0` | `127.0.0.1` |
+
+    ```bash
+    # Run the server on non-privileged ports
+    export ABT_NODE_HTTP_PORT=8080
+    export ABT_NODE_HTTPS_PORT=8443
+    export ABT_NODE_PORT=8089
+    ```
+  </Accordion>
+
+  <Accordion title="Authentication and Security">
+    Control session lifetimes, access restrictions, and security policies.
+
+    | Variable | Purpose | Default | Example |
+    |---|---|---|---|
+    | `ABT_NODE_SESSION_TTL` | Session time-to-live in seconds | `3600` | `7200` |
+    | `ABT_NODE_SESSION_CACHE_TTL` | Session cache TTL in seconds | `300` | `600` |
+    | `ABT_NODE_ADMIN_PATH` | URL path prefix for the admin dashboard | `/.well-known/service/admin` | `/admin` |
+    | `ABT_NODE_IP_WHITELIST` | Comma-separated IPs allowed to access admin | *(all)* | `127.0.0.1,192.168.1.0/24` |
+    | `ABT_NODE_DOMAIN_WHITELIST` | Comma-separated domains allowed for CORS | *(none)* | `example.com,*.example.com` |
+    | `ABT_NODE_DOMAIN_BLACKLIST` | Comma-separated domains to block | *(none)* | `malicious.com,*.spam.com` |
+    | `ABT_NODE_DOMAIN_WHITELIST_HEADERS` | Extra headers to include in CORS whitelist responses | *(none)* | `X-Custom-Header` |
+    | `ABT_NODE_NO_PASSKEY_USER_VERIFY` | Disable passkey user verification (`1` = disable) | `0` | `1` |
+    | `ABT_NODE_TRUSTED_SOURCES` | Comma-separated trusted blocklet store URLs | *(none)* | `https://store.arcblock.io` |
+    | `ABT_NODE_ALLOW_BLOCKLET_IFRAME_EMBEDDING` | Allow embedding blocklets in iframes (`1` = allow) | `0` | `1` |
+
+    <Warning>
+      Setting `ABT_NODE_ALLOW_BLOCKLET_IFRAME_EMBEDDING=1` disables `X-Frame-Options` header protection. Only enable
+      this if you need your blocklets embedded in iframes on external domains, as it exposes the application to
+      clickjacking attacks.
+    </Warning>
+
+    The following variables are **system-generated** and should not be set manually:
+
+    | Variable | Purpose |
+    |---|---|
+    | `ABT_NODE_DID` | Decentralized Identifier for the server instance |
+    | `ABT_NODE_PK` | Public key for the server's DID |
+    | `ABT_NODE_SK` | Secret key for the server's DID (keep secure) |
+    | `ABT_NODE_SESSION_SECRET` | Secret key for session encryption |
+    | `ABT_NODE_TOKEN_SECRET` | Secret key for JWT token signing |
+
+    ```bash
+    # Restrict trusted blocklet stores in serverless mode
+    export ABT_NODE_TRUSTED_SOURCES=https://store.arcblock.io,https://dev.blocklet.io
+    ```
+  </Accordion>
+
+  <Accordion title="Database and Storage">
+    Choose between SQLite and PostgreSQL, and configure caching backends.
+
+    | Variable | Purpose | Default | Example |
+    |---|---|---|---|
+    | `ABT_NODE_POSTGRES_URL` | PostgreSQL connection URL | *(uses SQLite)* | `postgresql://user:pass@localhost:5432/blocklet_server` |
+    | `ABT_NODE_CACHE_SQLITE_PATH` | Path to SQLite cache database file | `{DATA_DIR}/core/db-cache.db` | `/tmp/cache.db` |
+    | `ABT_NODE_CACHE_REDIS_URL` | Redis connection URL for caching | *(in-memory)* | `redis://localhost:6379` |
+    | `ABT_NODE_SQLITE_LARGE_CACHE` | Enable large SQLite cache (`1` = enable) | `0` | `1` |
+    | `ABT_NODE_NO_CACHE` | Disable caching entirely (`1` = disable) | `0` | `1` |
+    | `ABT_NODE_IGNORE_USE_POSTGRES` | Force SQLite even when `ABT_NODE_POSTGRES_URL` is set | `0` | `1` |
+    | `ABT_NODE_IGNORE_RESTART_POSTGRES` | Skip restarting PostgreSQL on startup | `0` | `1` |
+    | `ABT_NODE_CUSTOM_DATA_DIR` | Directory for CLI global config and PM2 data | `~/.arcblock` | `/custom/path` |
+
+    <Note>
+      `ABT_NODE_CUSTOM_DATA_DIR` controls where the Blocklet CLI stores its global state (including `blocklet.ini`,
+      `access-key.ini`, and PM2 data). It is separate from `ABT_NODE_DATA_DIR`, which is set per server instance
+      during `blocklet server init`.
+    </Note>
+
+    ```bash
+    # Use PostgreSQL instead of the default SQLite
+    export ABT_NODE_POSTGRES_URL=postgresql://blocklet:secret@db.example.com:5432/blocklet_server
+    ```
+  </Accordion>
+
+  <Accordion title="Docker Configuration">
+    Set default resource limits and behaviors for Docker-backed blocklets.
+
+    | Variable | Purpose | Default | Example |
+    |---|---|---|---|
+    | `ABT_NODE_NOT_ALLOW_DOCKER` | Disable Docker support entirely (`1` = disable) | `0` | `1` |
+    | `ABT_NODE_DOCKER_MEMORY` | Default memory limit for Docker containers | `512m` | `1g` |
+    | `ABT_NODE_DOCKER_CPUS` | Default CPU limit for Docker containers | `1` | `2` |
+    | `ABT_NODE_DOCKER_DISK_SIZE` | Default disk size limit for Docker containers | `10g` | `20g` |
+    | `ABT_NODE_SKIP_DOCKER_CHOWN` | Skip chown operations in Docker containers (`1` = skip) | `0` | `1` |
+    | `ABT_NODE_TEST_DOCKER` | Enable Docker testing mode (`1` = enable) | `0` | `1` |
+
+    ```bash
+    # Increase memory limit for resource-intensive blocklets
+    export ABT_NODE_DOCKER_MEMORY=2g
+    export ABT_NODE_DOCKER_CPUS=4
+    ```
+  </Accordion>
+
+  <Accordion title="Logging and Debugging">
+    Control log verbosity, log file locations, and development modes.
+
+    | Variable | Purpose | Default | Example |
+    |---|---|---|---|
+    | `ABT_NODE_LOG_DIR` | Directory for log files | `{DATA_DIR}/logs/_abtnode` | `/var/log/blocklet-server` |
+    | `ABT_NODE_LOG_NAME` | Base name of the log file | `daemon` | `blocklet-server` |
+    | `ABT_NODE_LOG_LEVEL` | Logging level: `error`, `warn`, `info`, `debug` | `info` | `debug` |
+    | `ABT_NODE_DEBUG_AS_SERVERLESS` | Enable serverless debugging mode (`1` = enable) | `0` | `1` |
+    | `ABT_NODE_DEV_MODE` | Enable development mode with extra debugging (`1` = enable) | `0` | `1` |
+
+    ```bash
+    # Enable verbose logging for troubleshooting
+    export ABT_NODE_LOG_LEVEL=debug
+    export ABT_NODE_LOG_DIR=/var/log/blocklet-server
+    ```
+  </Accordion>
+
+  <Accordion title="Performance and Limits">
+    Tune concurrency, health-check thresholds, backup intervals, and rate limits.
+
+    | Variable | Purpose | Default | Example |
+    |---|---|---|---|
+    | `ABT_NODE_MAX_CLUSTER_SIZE` | Maximum number of cluster instances | `4` | `8` |
+    | `ABT_NODE_JOB_BACKOFF_SECONDS` | Backoff time for job scheduling in seconds | `600` | `300` |
+    | `ABT_NODE_BLACKLIST_REFRESH_INTERVAL` | Interval for refreshing the gateway blacklist in minutes | `2` | `5` |
+    | `ABT_NODE_EMAIL_RATE_LIMIT` | Rate limit for email operations (per minute) | `10` | `5` |
+    | `ABT_NODE_EMAIL_VERIFY_RATE_LIMIT` | Rate limit for email verification (per minute) | `5` | `3` |
+    | `ABT_NODE_ENSURE_RUNNING_CHECK_INTERVAL` | Interval for checking running blocklets in milliseconds | `30000` | `60000` |
+    | `ABT_NODE_ENSURE_RUNNING_HIGH_LOAD_CPU` | CPU % threshold for high load detection | `80` | `90` |
+    | `ABT_NODE_ENSURE_RUNNING_HIGH_LOAD_MEMORY` | Memory % threshold for high load detection | `80` | `85` |
+    | `ABT_NODE_ENSURE_RUNNING_HIGH_LOAD_DISK` | Disk % threshold for high load detection | `90` | `95` |
+    | `ABT_NODE_ENABLE_ENSURE_BLOCKLET_RUNNING` | Enable automatic blocklet running assurance (`1` = enable) | `1` | `0` |
+    | `ABT_NODE_RUNTIME_MONITOR_DISABLED` | Disable the runtime process health monitor (`1` = disable) | *(enabled)* | `1` |
+    | `ABT_NODE_AUTO_BACKUP_INTERVAL` | Seconds between automatic Spaces backups | `28800` | `43200` |
+
+    <Note>
+      On resource-constrained servers, frequent backups can cause CPU spikes and memory pressure due to disk I/O.
+      Consider increasing `ABT_NODE_AUTO_BACKUP_INTERVAL` (for example, to `43200` for 12-hour intervals) if you
+      observe performance degradation during backup windows.
+    </Note>
+
+    ```bash
+    # Extend auto-backup interval to 12 hours
+    export ABT_NODE_AUTO_BACKUP_INTERVAL=43200
+
+    # Disable runtime monitoring in low-resource environments
+    export ABT_NODE_RUNTIME_MONITOR_DISABLED=1
+    ```
+  </Accordion>
+
+  <Accordion title="Domain and Routing">
+    Configure the routing provider, routing rebuild strategy, and domain-related features.
+
+    | Variable | Purpose | Default | Example |
+    |---|---|---|---|
+    | `ABT_NODE_ROUTER_PROVIDER` | Router provider implementation: `nginx` or `nodejs` | `nginx` | `nodejs` |
+    | `ABT_NODE_ROUTER_CONFIG` | Path to additional router configuration | *(none)* | `custom-config.yml` |
+    | `ABT_NODE_START_ROUTING` | Routing rebuild strategy on startup: `system` or `full` | `system` | `full` |
+    | `ABT_NODE_DID_DOMAIN` | Domain for DID-based routing | *(auto-detected)* | `did.example.com` |
+    | `ABT_NODE_SLP_DOMAIN` | Domain for SLP (Service Location Protocol) | *(auto-detected)* | `slp.example.com` |
+    | `ABT_NODE_DASHBOARD_DOMAIN` | Domain for the admin dashboard | *(auto-detected)* | `dashboard.example.com` |
+    | `ABT_NODE_WILDCARD_CERT_HOST` | Host for downloading wildcard certificates | `https://releases.arcblock.io/certs` | `https://custom-cert-host.com` |
+    | `ABT_NODE_ENABLE_SLP_DOMAIN` | Enable SLP domain support (`1` = enable) | `0` | `1` |
+    | `ABT_NODE_ENABLE_IPV6` | Enable IPv6 support (`1` = enable) | `0` | `1` |
+    | `ABT_NODE_FORCE_INTRANET` | Force intranet mode (`1` = enable) | `0` | `1` |
+    | `ABT_NODE_DISABLE_BLUE_GREEN` | Disable blue-green deployment (`1` = disable) | `0` | `1` |
+
+    `ABT_NODE_START_ROUTING` controls how much of the routing configuration is rebuilt when the server starts:
+    - **`system`** — Only rebuilds essential system routes. Faster startup.
+    - **`full`** — Rebuilds all routing rules including blocklet routes. Useful for recovery scenarios.
+
+    ```bash
+    # Force a full routing rebuild on the next server start
+    export ABT_NODE_START_ROUTING=full
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## System-generated variables
+
+The following variables are populated automatically by Blocklet Server at runtime. Do not set them manually.
+
+| Variable | Purpose |
+|---|---|
+| `ABT_NODE_RESTART_RUNNING_COMPONENT` | Flag indicating component restart status |
+| `ABT_NODE_OWNER_NFT_HOLDER` | NFT holder information for ownership |
+| `ABT_NODE_OWNER_NFT_ISSUER` | NFT issuer information for ownership |
+| `ABT_NODE_BLOCKLET_MODE` | Current blocklet operating mode |
+| `ABT_NODE_KERNEL_MODE` | Current kernel mode |
+| `ABT_NODE_VERSION` | Version of the running Blocklet Server |
+| `ABT_NODE_BINARY_NAME` | Name of the CLI binary |
+| `ABT_NODE_COMMAND_NAME` | Name of the CLI command |
+| `ABT_NODE_PACKAGE_NAME` | NPM package name for the server |
+
+## Security considerations
+
+- Use strong, randomly generated values for all secret-key variables in production.
+- Restrict filesystem access to the data directory and configuration files.
+- Use a secrets management tool (for example, HashiCorp Vault, AWS Secrets Manager) to inject sensitive variables rather than writing them to shell profile files.
+- Never commit `.env` files containing `ABT_NODE_SK`, `ABT_NODE_SESSION_SECRET`, or `ABT_NODE_TOKEN_SECRET` to version control.

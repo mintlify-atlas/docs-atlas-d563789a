@@ -1,0 +1,126 @@
+---
+title: "Zero-Downtime Upgrades with Blue-Green Deployment"
+description: "Learn how Blocklet Server's blue-green deployment eliminates upgrade downtime: how traffic switches, what the status fields mean, and when to disable it."
+---
+
+When you upgrade a blocklet the naive approach — stop the old version, install the new one, start it — leaves a gap where your service is unavailable. Blocklet Server eliminates this gap with blue-green deployment. The currently running version (blue) continues serving all traffic while the new version (green) is downloaded, installed, and started on separate ports. Traffic switches to the green instance only after it passes a health check. Users experience no interruption.
+
+## How blue and green instances work
+
+At any point during an upgrade, a blocklet can have two concurrent instances:
+
+- **Blue** — the current production version, handling all live traffic
+- **Green** — the incoming version, being prepared in the background
+
+Each instance runs on distinct ports. The nginx gateway determines which instance receives traffic based on the current routing configuration. When the green instance is healthy, nginx is reconfigured atomically to point at the green ports, completing the cutover.
+
+After a successful cutover, the blue instance can be kept running as a fallback or shut down — the server handles this based on configuration.
+
+## State fields
+
+The blocklet record in the database tracks both instances simultaneously:
+
+```javascript
+blocklet = {
+  status: BlockletStatus.running,      // blue instance status
+  greenStatus: BlockletStatus.running, // green instance status
+  ports: {
+    BLOCKLET_PORT: 8090,               // blue instance port
+  },
+  greenPorts: {
+    BLOCKLET_PORT: 8091,               // green instance port
+  },
+};
+```
+
+Child components of a composite blocklet each have their own `status`, `greenStatus`, `ports`, and `greenPorts` fields, so traffic can be switched at the component level with full precision.
+
+## Deployment flow
+
+<Steps>
+  <Step title="Download the new bundle">
+    The upgrade begins by fetching the new version's bundle. During download:
+
+    - Blue instance: `status = running` — serving live traffic normally
+    - Green instance: `greenStatus = downloading`
+  </Step>
+  <Step title="Extract and prepare the green instance">
+    The bundle is extracted and installed into a separate directory. The new version's environment variables and configuration are applied.
+
+    - Blue instance: `status = running`
+    - Green instance: `greenStatus = installing`
+  </Step>
+  <Step title="Start the green instance">
+    The green process starts on its assigned ports. The server waits for the health check to confirm the process is live.
+
+    - Blue instance: `status = running` — still serving traffic
+    - Green instance: `greenStatus = starting → running`
+
+    The `blocklet.blueOrGreenStarted` event is emitted once the green instance is healthy.
+  </Step>
+  <Step title="Switch traffic from blue to green">
+    Nginx routing is updated to point at the green instance's ports. From this moment, all new requests go to the green version. In-flight requests on the blue instance complete normally.
+
+    The routing update is handled by the `blocklet.blueOrGreenStarted` event handler in `core/state/lib/event/index.js`.
+  </Step>
+  <Step title="Retire or keep the blue instance">
+    After the cutover:
+
+    - The blue instance is optionally kept running as a rollback fallback.
+    - Or it is stopped and its ports released.
+
+    If the upgrade fails at any step, the server rolls back: blue continues serving traffic and the failed green instance is cleaned up.
+  </Step>
+</Steps>
+
+## When blue-green applies
+
+Blue-green deployment applies **only to upgrades of already-running blocklets**. It does not apply to:
+
+- Fresh installs (no existing running instance to protect)
+- Blocklets that are stopped at the time of upgrade
+- Upgrades where the blocklet is not configured to run
+
+If the blocklet is stopped when you trigger an upgrade, the process follows the standard install flow without a blue side to maintain.
+
+## Disabling blue-green deployment
+
+In some environments — resource-constrained servers, development setups, or where running two instances simultaneously is not desirable — you can disable blue-green deployment entirely:
+
+```bash
+export ABT_NODE_DISABLE_BLUE_GREEN=1
+blocklet server start
+```
+
+Or set it in `config.yml` under `env:`:
+
+```yaml config.yml
+env:
+  ABT_NODE_DISABLE_BLUE_GREEN: 1
+```
+
+<Warning>
+When `ABT_NODE_DISABLE_BLUE_GREEN=1`, upgrades follow the traditional stop-install-start flow. Your blocklet will be briefly unavailable during each upgrade.
+</Warning>
+
+## Monitoring an active blue-green upgrade
+
+During an upgrade you can observe both instance states with `blocklet server status`. The output shows the aggregate status, which reflects the most significant state across blue and green components.
+
+To watch the raw state transitions, check the server daemon log:
+
+```bash
+tail -f {DATA_DIR}/logs/_abtnode/daemon-$(date +%Y-%m-%d).log
+```
+
+Look for `blueOrGreenStarted` events and `routing update` messages to confirm when the traffic switch occurs.
+
+## Rollback
+
+If the green instance fails to start or fails its health check, the server automatically rolls back:
+
+1. The green instance is stopped and removed.
+2. The blue instance status is restored to `running`.
+3. Traffic remains on the blue instance throughout — no manual intervention required.
+
+A notification is created in the dashboard indicating the upgrade failed and a rollback occurred. The blocklet returns to its pre-upgrade version with no data loss.

@@ -1,0 +1,88 @@
+---
+title: "blocklet server init — Initialize a server instance"
+description: "Set up a new Blocklet Server data directory in the current folder, generating the config file, cryptographic keys, and routing configuration."
+---
+
+`blocklet server init` creates the configuration data directory for a new Blocklet Server instance in the current working directory. It generates a YAML config file, an encrypted secret key, and a server DID (decentralized identifier). You must run this command once before you can start a server with `blocklet server start`.
+
+## Usage
+
+```bash
+blocklet server init [options]
+```
+
+## Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-y, --yes` | `false` | Skip all confirmation prompts and accept defaults (same as `--force`) |
+| `-f, --force` | `false` | Alias for `-y, --yes` |
+| `-i, --interactive` | `false` | Run in interactive mode to answer configuration questions; ignored when `--force` or `--yes` is set |
+| `--mode <mode>` | `production` | Initial server mode: `production` or `debug` |
+| `--https` | enabled | Enable HTTPS support for the dashboard and blocklets |
+| `--no-https` | — | Disable HTTPS support for the dashboard and blocklets |
+| `--http-port <port>` | `80` | HTTP port for the service gateway |
+| `--https-port <port>` | `443` | HTTPS port for the service gateway |
+| `--sk <secret-key>` | `""` | Provide a custom server secret key instead of generating one |
+| `--web-wallet-url <url>` | system default | URL of the web wallet used for authentication |
+| `--owner-nft-holder <did>` | `""` | DID that holds the ownership NFT |
+| `--owner-nft-issuer <did>` | `""` | DID that issued the ownership NFT |
+| `--trusted-passport-issuer <did>` | `""` | Passport issuer DID trusted by this server |
+| `--disable-passport-issuance` | `false` | Prevent this server from issuing passports |
+
+## Interactive prompts
+
+When run with `-i` (and without `--force` or `--yes`), the command walks you through a series of questions:
+
+- **Server name and description** — displayed in the admin dashboard
+- **Daemon port** — the internal port the server daemon listens on (default from `ABT_NODE_PORT` or the system default)
+- **Routing engine** — the provider used to route traffic to blocklets
+- **Admin dashboard path** — the URL prefix where the admin dashboard is mounted
+- **Web wallet URL** — the DID wallet used for login
+- **HTTPS** — whether to enable HTTPS for the dashboard and blocklets
+- **IP wildcard domain** — domain used to derive per-blocklet subdomains from IP addresses
+- **Wildcard certificate host** — where to download the wildcard TLS certificate
+- **Max upload file size** — maximum file upload size in MB
+- **HTTP and HTTPS gateway ports** — ports the routing engine listens on
+- **Daemon and blocklet memory limits** — max memory (GB) for the server and for each blocklet
+
+Without `-i`, all prompts are answered with their defaults.
+
+## Examples
+
+```bash
+# Non-interactive init with all defaults (recommended for automation)
+blocklet server init --yes
+
+# Interactive init to customize all settings
+blocklet server init --interactive
+
+# Init with debug mode and no HTTPS
+blocklet server init --yes --mode debug --no-https
+
+# Init specifying custom gateway ports
+blocklet server init --yes --http-port 8080 --https-port 8443
+
+# Init with a pre-generated secret key
+blocklet server init --yes --sk <your-secret-key>
+```
+
+## What gets created
+
+After a successful init, the following structure is created in the current directory:
+
+```
+.blocklet/
+├── config.yml    # Main server configuration (YAML)
+└── key           # Encrypted secret key file (mode 0600)
+```
+
+`config.yml` contains the server identity (DID, public key, encrypted secret key), routing settings, memory limits, and the list of blocklets to install on first start.
+
+<Note>
+If a `.blocklet/` directory already exists in the current directory, `blocklet server init` will detect it and exit without overwriting anything. Run `blocklet server start` instead.
+</Note>
+
+<Warning>
+The generated `key` file is chmod `0600` and must remain readable only by the process owner. Losing it makes the encrypted secret key unrecoverable.
+</Warning>

@@ -1,0 +1,163 @@
+---
+title: "How HTTP Request Routing Works in Blocklet Servers"
+description: "Nginx-based routing in Blocklet Server: two-phase install flow, domain group name format, debounced batch updates, and dynamic rule injection per site."
+---
+
+Every blocklet that exposes a web interface needs a way for external traffic to reach its internal service port. Blocklet Server handles this through an nginx-based routing layer. When you install a blocklet, the server creates a database record called a `Site` that maps a domain to routing rules, then generates a per-blocklet nginx configuration file and reloads nginx. The entire process is designed to be fast at install time and efficient at scale by batching configuration changes.
+
+## How routing works
+
+Blocklet Server routes incoming HTTP/HTTPS requests by generating nginx configuration files from the `Site` records stored in its SQLite database. Each blocklet that has a web interface gets its own nginx config file in the `sites/` directory:
+
+```nginx
+# Example: sites/z8iZrkWY....conf
+server {
+    listen 80;
+    server_name app.example.com z8iZrkWY.did.abtnet.io;
+
+    location / {
+        proxy_set_header X-Blocklet-Did "z8iZrkWY...";
+        proxy_set_header X-Path-Prefix "/";
+        include includes/proxy;
+        proxy_pass http://127.0.0.1:8091;
+    }
+}
+```
+
+The main `nginx.conf` includes all blocklet conf files with a wildcard directive (`include sites/*.conf`), so each blocklet's config is isolated and can be updated independently without touching the global configuration.
+
+## Domain group name format
+
+Each blocklet's `Site` record uses an internal domain group name as its primary domain (stored in `Site.domain`). The format is:
+
+```
+{blockletDid}@blocklet-site-group
+```
+
+For example, a blocklet with DID `z8iZrkWY...` gets the domain group `z8iZrkWY...@blocklet-site-group`. Public-facing domains (custom domains, DID-based subdomains) are stored in `Site.domainAliases` and are what users actually type in a browser.
+
+## Routing during installation: two-phase approach
+
+Routing is set up in two phases during installation. The early phase exists to warm up DNS before the blocklet is fully installed, reducing "time to first access" after install completes.
+
+<Steps>
+  <Step title="Early setup at the added event">
+    When the blocklet record is created in the database (status `added`, before download begins), the `blocklet.added` event fires. The event handler calls `ensureBlockletRouting()`, which creates the `Site` record and queues an nginx config update.
+
+    This early setup publishes a DID document so DNS infrastructure can start resolving the blocklet's domain while the bundle is still downloading.
+
+    Errors at this phase are non-blocking: if early routing setup fails, it is retried at the `installed` event.
+  </Step>
+
+  <Step title="Complete setup at the installed event">
+    When installation finishes (status `installed`), the `blocklet.installed` event fires. The handler calls `ensureBlockletRouting()` again to verify or complete the routing record, then:
+
+    1. Refreshes RBAC permissions for all declared interfaces
+    2. Sends a full DID document update with complete blocklet metadata
+    3. Creates a user-facing notification if routing setup fails
+  </Step>
+</Steps>
+
+## Routing rules structure
+
+Each `Site` contains an array of `TRoutingRule` objects that define how paths are matched and forwarded:
+
+```typescript
+interface TRoutingRule {
+  id: string;
+  from: {
+    pathPrefix: string;       // e.g., "/" or "/api"
+    groupPathPrefix?: string; // For component grouping
+    pathSuffix?: string;      // For special routes like /__blocklet__.js
+  };
+  to: {
+    port: number;             // Target service port (e.g., 8091)
+    type: 'blocklet' | 'daemon' | 'service' | 'redirect';
+    did: string;              // Target blocklet DID
+    interfaceName?: string;   // Interface name from blocklet.yml
+    componentId?: string;     // Child component ID
+  };
+  isProtected: boolean;       // Whether authentication is required
+}
+```
+
+When a new `Site` is created, the router:
+
+1. Validates the site configuration and checks for domain uniqueness
+2. Expands rules to include child component rules via `getRulesForMutation()`
+3. Validates all path prefixes for conflicts
+4. Runs a dry-run nginx config test
+5. Persists the site to the database
+6. Emits `router.site.created`
+
+## Nginx config generation
+
+The `NginxProvider` generates configuration in two passes:
+
+1. **Global config** (`nginx.conf`): system-wide settings, CORS headers, rate limiting, WAF policies, and system sites (sites without a `blockletDid`)
+2. **Per-blocklet config** (`sites/{blockletDid}.conf`): one file per blocklet, generated in parallel
+
+When the `skipBlockletSites` flag is set (used for global-only updates), only the first pass runs. When updating a single blocklet, only that blocklet's conf file is regenerated—a significant performance improvement over regenerating all files.
+
+## Batching and debouncing
+
+Config generation is not triggered immediately on every change. Instead, changes are queued and processed in batches:
+
+```javascript
+queueChange(changeType, did = undefined) {
+  if (changeType === 'global') {
+    this.pendingChanges.global = true;
+  } else if (changeType === 'blocklet' && did) {
+    this.pendingChanges.blocklets.add(did);
+  } else if (changeType === 'blocklet-remove' && did) {
+    this.pendingChanges.blockletsRemoved.add(did);
+  }
+  // wait: 1000ms, maxWait: 5000ms
+  this.debouncedProcessBatch();
+}
+```
+
+The batch processor then:
+
+1. Snapshots and clears all pending changes atomically
+2. Updates the global config if any global change is pending
+3. Updates each changed blocklet's conf file individually (O(1) per blocklet)
+4. Removes conf files for deleted blocklets
+5. Calls `nginx -s reload` once for all accumulated changes
+
+This means that if 10 blocklets are installed in quick succession, their conf files are all generated and nginx is reloaded only once.
+
+## Dynamic rules added per site
+
+Before nginx config is written, the `formatSites()` function injects additional rules into each site automatically. These rules are marked `dynamic: true` and are not stored in the database:
+
+| Dynamic route | Purpose |
+| --- | --- |
+| `robots.txt`, `sitemap.xml` | Proxied to the daemon service for SEO |
+| `favicon.ico` | Proxied to the static service |
+| `/__blocklet__.js` | Runtime blocklet metadata injection endpoint |
+| `/.blocklet/proxy` | Cross-blocklet proxy endpoint |
+
+## Performance characteristics
+
+| Operation | Complexity | Detail |
+| --- | --- | --- |
+| Single blocklet install | O(1) | Uses `getBlockletRoutingParams(did)`—one targeted query |
+| Batch processing | O(k) | k = number of changed blocklets in the batch |
+| Full regeneration | O(N) | N = total blocklets; only done at startup or manual rebuild |
+| Debounce wait | 1,000 ms | Batches rapid successive changes |
+| Max wait | 5,000 ms | Forces processing even with continuous incoming changes |
+
+## Upgrade routing
+
+For upgrades (`blocklet.upgraded` event), the server uses `ensureBlockletRoutingForUpgrade()` instead of the standard install path. This function:
+
+1. Backs up the existing site configuration
+2. Removes stale interface rules from the old version
+3. Updates rules for the new version's interfaces
+4. Preserves any custom routing rules the user has configured
+5. Restores the backup if the update fails
+
+## Error handling
+
+Failed routing operations create user notifications via `teamManager.createNotification()` with `severity: 'error'`. This ensures users are informed of routing failures without blocking the installation or upgrade.

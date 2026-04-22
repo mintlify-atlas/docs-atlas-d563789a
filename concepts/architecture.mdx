@@ -1,0 +1,253 @@
+---
+title: "Blocklet Server Architecture and Core Entity Model"
+description: "How Blocklet Server organizes apps, components, sites, and DIDs into a layered entity hierarchy, modeled on the iOS app runtime paradigm."
+---
+
+Blocklet Server is to blocklets what iOS is to apps: a managed runtime that handles installation, lifecycle, routing, and identity for the applications running on it. Just as iOS provides a sandboxed environment where each app has its own identity and resource boundaries, Blocklet Server provides each blocklet with a unique DID, isolated storage, port assignments, and a routing layer that maps public domains to the blocklet's internal service port.
+
+## The iOS analogy
+
+| Concept | Blocklet Server | iOS equivalent |
+| --- | --- | --- |
+| Runtime | Blocklet Server | iOS |
+| App | Blocklet | iOS App |
+| Extension | BlockletChild (Component) | App Extension / Widget |
+| App Store | Blocklet Store | App Store |
+
+## Entity hierarchy
+
+Everything in Blocklet Server is organized under a single root `Server` node. Each installed app is a `Blocklet`, which can contain child components (`BlockletChild`), supplementary metadata (`BlockletExtra`), and one or more domain routing configurations (`Site`).
+
+```
+Server (Node)
+└── Blocklet (App)
+     ├── BlockletExtra (metadata / settings)
+     ├── BlockletChild (Component)
+     │    └── BlockletChild (recursive nesting)
+     └── Site (routing / domain)
+```
+
+Children can be nested recursively: a `BlockletChild` may itself contain further `BlockletChild` records, enabling multi-layer component trees.
+
+## Core entities
+
+### Server
+
+The root entity representing the Blocklet Server instance.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `did` | string | Server's unique DID (primary key) |
+| `pk` | string | Public key |
+| `sk` | string | Secret key |
+| `version` | string | Server version |
+| `port` | number | Main listening port |
+| `routing` | object | Routing configuration |
+| `mode` | string | Operational mode |
+| `initialized` | boolean | Setup status |
+
+### Blocklet (App)
+
+The main application entity installed on the server.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | string | Primary key (auto-generated UUID, internal use only) |
+| `appDid` | string | Wallet address from `blockletInfo.wallet.address` |
+| `appPid` | string | Equals `meta.did`; the primary blocklet identifier |
+| `mode` | string | `"production"`, `"development"`, etc. |
+| `meta` | TBlockletMeta | Blocklet metadata parsed from `blocklet.yml` |
+| `meta.did` | string | Blocklet DID, same as `appPid` |
+| `status` | number | `BlockletStatus` enum value |
+| `port` | number | Primary service port |
+| `ports` | object | Multiple port mappings |
+| `environments` | array | Environment variable definitions |
+| `createdAt` | Date | Creation timestamp |
+| `installedAt` | Date | Installation timestamp |
+| `startedAt` | Date | Last start timestamp |
+| `stoppedAt` | Date | Last stop timestamp |
+
+<Note>
+`appDid` and `appPid` are distinct: `appDid` is the blocklet's *wallet address* used for signing DID transactions, while `appPid` (equal to `meta.did`) is the primary identifier used in almost all other contexts.
+</Note>
+
+### BlockletChild (Component)
+
+Child blocklets nested within a parent blocklet.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | string | Primary key (UUID, internal use only) |
+| `parentBlockletId` | string | FK to parent `Blocklet.id` (UUID) |
+| `parentBlockletDid` | string | Parent's `appPid` (indexed) |
+| `childDid` | string | Child's DID from `child.meta.did` (indexed) |
+| `mountPoint` | string | URL path where the child is mounted |
+| `meta` | object | Child metadata from `blocklet.yml` |
+| `status` | number | Status enum |
+| `ports` | object | Port mappings |
+| `environments` | array | Environment variables |
+| `greenStatus` | number | Health status (blue-green deployment) |
+| `greenPorts` | object | Health-checked ports |
+| `installedAt` | Date | Installation timestamp |
+| `startedAt` | Date | Last start timestamp |
+| `stoppedAt` | Date | Last stop timestamp |
+
+### BlockletExtra
+
+Metadata and configuration container for blocklets.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `did` | string | Primary key (blocklet's DID, equals `meta.did`) |
+| `appDid` | string | Stores `appPid` (historical naming inconsistency) |
+| `meta` | TSimpleBlockletMeta | Simplified metadata |
+| `controller` | TBlockletController | NFT controller info |
+| `configs` | TConfigEntry[] | Configuration entries |
+| `children` | TChildExtraConfigs[] | Child configurations |
+| `settings` | TBlockletSettings | Blocklet settings |
+| `expiredAt` | string | Expiration date |
+
+<Warning>
+Despite its name, `BlockletExtra.appDid` stores the blocklet's `appPid` (which equals `meta.did`), not the wallet address. This is a historical naming inconsistency in the schema.
+</Warning>
+
+### Site
+
+Domain and routing configuration for a blocklet.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | string | Primary key (UUID) |
+| `domain` | string | Domain group name (unique); format: `{did}@blocklet-site-group` |
+| `domainAliases` | string[] | Alternative domains (public-facing) |
+| `name` | string | Display name |
+| `isProtected` | boolean | System protection flag |
+| `rules` | TRoutingRule[] | Array of routing rules |
+| `port` | number | Listening port |
+| `corsAllowedOrigins` | string[] | CORS configuration |
+
+## DID identification system
+
+Every entity in Blocklet Server is identified using DIDs (Decentralized Identifiers). Understanding which DID to use in which context is essential when writing blocklet code.
+
+| DID type | Location | Source / derivation | Purpose |
+| --- | --- | --- | --- |
+| **Server DID** | `Server.did` | Server's DID Wallet | Identifies the entire node |
+| **App DID** | `Blocklet.appDid` | `blockletInfo.wallet.address` | Wallet address (for signing transactions) |
+| **App PID** | `Blocklet.appPid` | `blocklet.meta.did` | Primary blocklet identifier |
+| **Team DID** | Used in APIs | Equals `blocklet.appPid` | Scoping identifier for team-based resources |
+| **Meta DID** | `blocklet.meta.did` | `blocklet.yml` | Original blocklet DID from metadata |
+| **Child DID** | `BlockletChild.childDid` | `child.meta.did` | Identifies child components |
+| **Parent DID** | `BlockletChild.parentBlockletDid` | Parent's `appPid` / `meta.did` | Links child to parent |
+| **Database ID** | `Blocklet.id` | Auto-generated UUID | Database primary key (internal only) |
+
+### Identifier selection guide
+
+| Scenario | Identifier to use | Example |
+| --- | --- | --- |
+| Querying a blocklet in the database | `appPid` or `meta.did` | `blockletManager.detail({ did: appPid })` |
+| Accessing team-scoped state | `teamDid` (equals `appPid`) | `teamManager.getAgentState(teamDid)` |
+| Wallet / DID transactions | `appDid` (wallet address) | `{ appDid: wallet.address, appSk: wallet.secretKey }` |
+| Database foreign keys | `id` (UUID) | `parentBlockletId: blocklet.id` |
+| Component lifecycle events | `componentDid` (equals `meta.did`) | `{ componentDid: child.meta.did }` |
+| Router configuration | `did` (typically `appPid`) | `routing.to.did` |
+
+```javascript
+// Use appPid for blocklet operations
+const blocklet = await blockletManager.detail({ did: blocklet.appPid });
+
+// Use teamDid (= appPid) for team-scoped resources
+const agentState = await teamManager.getAgentState(blocklet.appPid);
+
+// Use appDid for wallet operations
+const sender = {
+  appDid: blockletInfo.wallet.address,
+  appSk: blockletInfo.wallet.secretKey,
+};
+
+// Use id for database relationships
+await BlockletChild.findAll({
+  where: { parentBlockletId: blocklet.id },
+});
+
+// Use meta.did for component identification
+const componentDid = child.meta.did;
+await processComponentInstall({ appPid, componentDid, children });
+```
+
+## Parent-child relationship
+
+The diagram below shows how all identity fields connect within a parent blocklet and its two components:
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│ Blocklet (Parent App)                                            │
+│ ├── id: "uuid-123"          (DB primary key)                     │
+│ ├── appDid: "z1wallet..."   (wallet address)                     │
+│ ├── appPid: "z8iZrkWY..."   (= meta.did, primary identifier)     │
+│ └── meta.did: "z8iZrkWY..."                                      │
+│      │                                                           │
+│      ├── BlockletChild (Component A)                             │
+│      │   ├── id: "uuid-456"                                      │
+│      │   ├── parentBlockletId: "uuid-123"                        │
+│      │   ├── parentBlockletDid: "z8iZrkWY..."                    │
+│      │   ├── childDid: "z8iZabc..."   (= child.meta.did)         │
+│      │   └── mountPoint: "/api"                                  │
+│      │                                                           │
+│      └── BlockletChild (Component B)                             │
+│          ├── id: "uuid-789"                                       │
+│          ├── parentBlockletId: "uuid-123"                         │
+│          ├── parentBlockletDid: "z8iZrkWY..."                     │
+│          ├── childDid: "z8iZdef..."   (= child.meta.did)          │
+│          └── mountPoint: "/admin"                                 │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+## Routing rule structure
+
+Sites route incoming requests to blocklets through typed routing rules:
+
+```typescript
+interface TRoutingRule {
+  id: string;
+  from: {
+    pathPrefix: string;       // URL path to match, e.g., "/" or "/api"
+    groupPathPrefix?: string; // For component grouping
+    pathSuffix?: string;      // For special routes like /__blocklet__.js
+  };
+  to: {
+    port: number;             // Target service port
+    type: 'blocklet' | 'daemon' | 'service' | 'redirect';
+    did: string;              // Target blocklet DID
+    interfaceName?: string;   // Interface name from blocklet metadata
+    componentId?: string;     // Child component ID
+  };
+  isProtected: boolean;       // Whether authentication is required
+}
+```
+
+## Database tables
+
+| Table | Primary key | Key indexes |
+| --- | --- | --- |
+| `servers` | `did` | — |
+| `blocklets` | `id` | `appDid`, `appPid` |
+| `blocklet_children` | `id` | `parentBlockletId`, `parentBlockletDid`, `childDid`, `status` |
+| `blocklet_extras` | `did` | `appDid`, `createdAt` |
+| `sites` | `id` | `domain` (unique) |
+
+<Note>
+The `blocklet_children` table was introduced to improve query performance. Previously, children were stored as a JSON array inside `Blocklet.children`. The dedicated table enables indexed parent/child queries and composite status indexes.
+</Note>
+
+## App uptime tracking
+
+The parent blocklet's `startedAt` and `stoppedAt` fields reflect aggregate child status:
+
+- **Running**: at least one child has `status === running` or `greenStatus === running`
+- **Stopped**: all children are not running
+
+| Transition | Trigger | Action |
+| --- | --- | --- |
+| Not running → Running | First child starts | Set `startedAt = now`, `stoppedAt = null` |
+| Running → Not running | Last running child stops | Set `stoppedAt = now`, `startedAt = null` |

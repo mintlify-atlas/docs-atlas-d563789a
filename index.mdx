@@ -1,97 +1,93 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "Blocklet Server: Decentralized App Runtime Platform"
+description: "Blocklet Server is a standardized runtime for deploying and managing Blocklet apps, with built-in auth, routing, lifecycle management, and a web dashboard."
 ---
 
-## Setting up
+Blocklet Server is the operating environment for Blocklet applications — think of it as the iOS for decentralized apps. It handles everything from installation and routing to authentication and process management, so you can focus on building great Blocklets rather than infrastructure.
 
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Get Blocklet Server running in minutes using Docker or npm.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Installation" icon="download" href="/installation">
+    Full installation guide for Docker, npm, and building from source.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Core Concepts" icon="book" href="/concepts/architecture">
+    Understand the architecture, blocklet lifecycle, routing, and authentication model.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="CLI Reference" icon="terminal" href="/cli/server-init">
+    Complete reference for the `blocklet` command-line interface.
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## What is Blocklet Server?
 
-Everything you need to create world-class documentation.
+Blocklet Server provides a complete runtime environment for running Blocklet decentralized applications. It acts as the platform layer between your infrastructure and your Blocklet apps — analogous to how iOS runs iPhone apps.
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
+<CardGroup cols={3}>
+  <Card title="Lifecycle Management" icon="arrows-spin">
+    Install, start, stop, upgrade, and remove Blocklets with full state tracking and rollback support.
   </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
+  <Card title="Smart Routing" icon="route">
+    Nginx-based request routing with automatic configuration, SSL termination, and per-blocklet domain management.
   </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
+  <Card title="DID Authentication" icon="shield-check">
+    Built-in decentralized identity (DID) authentication and role-based access control (RBAC) for all Blocklets.
   </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
+  <Card title="Zero-Downtime Deploys" icon="circle-check">
+    Blue-green deployment ensures upgrades happen without dropping traffic.
   </Card>
-</Columns>
+  <Card title="Web Dashboard" icon="display">
+    Visual admin interface for managing Blocklets, viewing logs, and configuring your server.
+  </Card>
+  <Card title="SDK Support" icon="code">
+    Node.js and browser SDKs let Blocklet apps integrate with the server's auth, notifications, and data APIs.
+  </Card>
+</CardGroup>
 
-## Need inspiration?
+## Get started in 3 steps
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+<Steps>
+  <Step title="Install Blocklet Server">
+    Pull the Docker image or install via npm:
+
+    ```bash
+    docker pull arcblock/blocklet-server
+    docker run -d -p 80:80 -p 443:443 -v ~/blocklet-data:/data arcblock/blocklet-server
+    ```
+
+    Or with npm:
+
+    ```bash
+    npm install -g @blocklet/cli
+    blocklet server start -a
+    ```
+  </Step>
+  <Step title="Access the dashboard">
+    Open [http://localhost](http://localhost) in your browser. Complete the initial setup wizard to configure your server domain, create your admin account, and generate your server DID.
+  </Step>
+  <Step title="Install your first Blocklet">
+    From the dashboard, click **Store** to browse available Blocklets, or use the CLI to install directly:
+
+    ```bash
+    blocklet install https://store.blocklet.dev/blocklets/z8ia29UsENBg6tLZUKi2HABj38Cw1LmHZo8e
+    ```
+  </Step>
+</Steps>
+
+## Explore the documentation
+
+<CardGroup cols={2}>
+  <Card title="Managing Blocklets" icon="layer-group" href="/guides/managing-blocklets">
+    Learn to install, configure, start, stop, and upgrade Blocklets via the dashboard and CLI.
+  </Card>
+  <Card title="Blue-Green Deployment" icon="arrows-left-right" href="/guides/blue-green-deployment">
+    Deploy new versions with zero downtime using the built-in blue-green deployment system.
+  </Card>
+  <Card title="Node.js SDK" icon="node-js" href="/reference/node-sdk">
+    Build Blocklets that integrate with authentication, notifications, and the server's data APIs.
+  </Card>
+  <Card title="Environment Variables" icon="gear" href="/reference/environment-variables">
+    Configure Blocklet Server behavior with the full set of `ABT_NODE_*` environment variables.
+  </Card>
+</CardGroup>

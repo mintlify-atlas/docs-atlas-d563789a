@@ -1,0 +1,189 @@
+---
+title: "Installing, Configuring, and Removing Blocklets"
+description: "Manage blocklets via the dashboard and CLI: install from the store or URL, view status and logs, trigger upgrades, and uninstall with data retention options."
+---
+
+Blocklets are applications that run on Blocklet Server. Each blocklet goes through a well-defined lifecycle — from installation through running to eventual removal — and every stage is accessible through the web dashboard. The CLI provides lower-level operations for deployment, deletion, and development workflows. This guide walks through each operational task a server operator needs to perform day-to-day.
+
+## Installing blocklets
+
+### From the Blocklet Store (dashboard)
+
+Open the dashboard at `http://your-server` and navigate to **Store**. Find the blocklet you want, click **Install**, and the server downloads and installs it automatically. The status indicator on the blocklet card progresses through `downloading → installing → installed`.
+
+### From a direct URL (dashboard)
+
+To install from a direct bundle URL, use the **Install from URL** option in the dashboard's Store section. Paste the bundle URL (pointing to a `.tar.gz` or `.zip` archive) and the server fetches and installs it.
+
+<Note>
+In serverless mode, blocklets can only be installed from stores listed in the configured registry. Use `ABT_NODE_TRUSTED_SOURCES` to permit additional store URLs without modifying the registry list.
+</Note>
+
+### Using `blocklet deploy` (CLI)
+
+If you have already built and bundled a blocklet locally, push it directly to the server:
+
+```bash
+# Bundle first
+blocklet bundle
+
+# Deploy to the locally running server
+blocklet deploy .blocklet/bundle --app-id <parent-app-did>
+```
+
+See the [blocklet deploy](/cli/blocklet-deploy) reference for remote server deployment with access keys.
+
+## Starting and stopping blocklets
+
+### Dashboard
+
+Each blocklet card in the dashboard shows a **Start** or **Stop** button. Click it to trigger the corresponding operation. The status badge updates in real time as the blocklet transitions through its lifecycle states.
+
+<Tip>
+The dashboard also provides **Restart** from the blocklet detail page. Use this to pick up environment variable changes without a full stop-then-start.
+</Tip>
+
+## Viewing blocklet status
+
+### Dashboard
+
+The main dashboard lists all installed blocklets with their current status badges. Click any blocklet to open its detail page, which shows version, status history, configured environment variables, and log output.
+
+### CLI — server-wide overview
+
+```bash
+# Show server status and all installed blocklets (first 20)
+blocklet server status
+
+# Show all blocklets without pagination
+blocklet server status --all
+```
+
+The output lists each blocklet's name, current status, and its DID-based URL.
+
+### Blocklet status values
+
+| Status | Description |
+|---|---|
+| `installed` | Downloaded and ready to start |
+| `starting` | Start process is in progress |
+| `running` | Healthy and serving traffic |
+| `stopping` | Graceful shutdown in progress |
+| `stopped` | Process is stopped; data is intact |
+| `error` | Start, install, or upgrade failed |
+| `upgrading` | Upgrade is in progress |
+| `downloading` | Bundle is being fetched |
+
+### Viewing logs
+
+From the dashboard, open the blocklet detail page and click the **Logs** tab to stream real-time output.
+
+From the filesystem, log files live at:
+
+- `{DATA_DIR}/logs/{blocklet-name}/output.log` — standard output
+- `{DATA_DIR}/logs/{blocklet-name}/error.log` — standard error
+
+Server daemon logs live at `{DATA_DIR}/logs/_abtnode/` and rotate daily:
+
+- `daemon-<date>.log` — business events
+- `daemon-error-<date>.log` — errors
+- `access-<date>.log` — HTTP access log
+
+## Upgrading blocklets
+
+### Manual upgrade (dashboard)
+
+<Steps>
+  <Step title="Open the blocklet detail page">
+    In the dashboard, click the blocklet you want to upgrade to open its detail page.
+  </Step>
+  <Step title="Click Upgrade">
+    If a newer version is available, an **Upgrade** button appears. Click it to start the process.
+
+    The blocklet status changes to `upgrading` while the new version downloads and installs. If blue-green deployment is enabled (the default), traffic continues to flow to the current version while the new version starts up.
+  </Step>
+  <Step title="Verify the upgrade">
+    Once the status returns to `running`, the upgrade is complete. Check the version number on the detail page to confirm.
+  </Step>
+</Steps>
+
+### Auto-upgrade
+
+Enable auto-upgrade from the blocklet detail page in the dashboard. When enabled, the server automatically upgrades the blocklet whenever a new version is published to the store.
+
+<Warning>
+Auto-upgrade triggers on every new release. For blocklets in production, consider leaving auto-upgrade off and upgrading manually after testing the new version in a staging environment.
+</Warning>
+
+## Configuring blocklet environment variables
+
+Each blocklet has its own set of environment variables that you can set from the dashboard.
+
+### Dashboard
+
+1. Open the blocklet detail page.
+2. Navigate to the **Settings** or **Environment** tab.
+3. Add or modify key-value pairs.
+4. Save and restart the blocklet for the changes to take effect.
+
+<Note>
+Environment variables set through the dashboard are stored in the server database and persist across restarts. Variables you set in the shell before starting the server are not automatically inherited by blocklets.
+</Note>
+
+## Removing blocklets
+
+Removal is permanent for the blocklet's code, but you control what happens to its data.
+
+### Dashboard
+
+1. Stop the blocklet if it is running.
+2. Open the blocklet detail page and click **Uninstall** or **Remove**.
+3. Choose your data retention options in the confirmation dialog.
+
+### CLI
+
+Use `blocklet delete` to permanently remove a blocklet by its DID. The server must be running.
+
+```bash
+# Delete a blocklet (prompts for confirmation)
+blocklet delete --app-did <blocklet-did>
+
+# Delete and keep data on disk
+blocklet delete --app-did <blocklet-did> --keep-data
+
+# Delete without confirmation (useful in CI)
+blocklet delete --app-did <blocklet-did> --yes
+```
+
+<Warning>
+Without `--keep-data`, `blocklet delete` permanently removes all blocklet data. You are prompted to confirm unless you pass `--yes`.
+</Warning>
+
+Find a blocklet's DID from the dashboard detail page or by running `blocklet server status`.
+
+## Troubleshooting
+
+### Blocklet stuck in `error` state
+
+<Steps>
+  <Step title="Check the error log">
+    Open the blocklet's **Logs** tab in the dashboard, or read the file directly:
+
+    ```bash
+    cat {DATA_DIR}/logs/{blocklet-name}/error.log
+    ```
+  </Step>
+  <Step title="Retry the start">
+    From the `error` state, click **Start** in the dashboard. If the underlying issue is resolved, the blocklet will transition to `running`.
+  </Step>
+  <Step title="Check required environment variables">
+    Some blocklets require environment variables to be set before they can start. Look for a `preStart` validation failure in the error log, then set the missing variables in the blocklet's environment settings and try again.
+  </Step>
+</Steps>
+
+### Blocklet not responding to traffic
+
+1. Open the dashboard and confirm the blocklet is in `running` state.
+2. Check `{DATA_DIR}/logs/{blocklet-name}/output.log` for application errors.
+3. Verify the blocklet's port is not in conflict: each blocklet is automatically assigned a unique port starting from `ABT_NODE_BLOCKLET_PORT` (default `8090`).
+4. Restart the blocklet from the dashboard detail page.

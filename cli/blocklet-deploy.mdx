@@ -1,0 +1,143 @@
+---
+title: "blocklet deploy — Deploy a Blocklet to a Server"
+description: "Upload a bundled blocklet from a local directory to a local or remote Blocklet Server, installing or upgrading it in one atomic step."
+---
+
+The `blocklet deploy` command uploads a blocklet bundle from a local directory to a running Blocklet Server. It handles the full pipeline: reading local bundle metadata, computing a file manifest, uploading the tarball over the GraphQL API, and triggering an install or upgrade on the target server. You can deploy to the locally running server without credentials, or to a remote server using an access key pair.
+
+## Usage
+
+```bash
+blocklet deploy <folder> [options]
+```
+
+The `<folder>` argument is a path to the directory that contains (or is) the blocklet bundle. Tilde expansion is supported (e.g. `~/my-blocklet/.blocklet/bundle`).
+
+## Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `<folder>` | Path to the local blocklet bundle directory |
+
+## Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--endpoint <host>` | — | Full URL of the remote Blocklet Server dashboard, e.g. `https://my-server.example.com/admin` |
+| `--access-key <key>` | — | Access key ID for authenticating with the remote server |
+| `--access-secret <secret>` | — | Access key secret paired with `--access-key` |
+| `--app-id <did>` | — | DID of the parent app to mount this blocklet into when deploying as a component |
+| `--app-did <did>` | — | Deprecated alias for `--app-id` |
+| `--mount-point <mountPoint>` | _(derived from title/name)_ | URL path at which the blocklet is mounted inside the parent app |
+| `--incremental` | `false` | Upload only files that differ from the version already on the server |
+
+## Deploying to a local server
+
+When you omit `--endpoint`, `--access-key`, and `--access-secret`, the CLI connects to the locally running Blocklet Server and creates a temporary access key automatically. The server must be running before you deploy.
+
+```bash
+# Deploy to the local Blocklet Server
+blocklet deploy .blocklet/bundle --app-id zNKr34afd...
+```
+
+If the server is not running you will see an error. Start it first with:
+
+```bash
+blocklet server start
+```
+
+## Deploying to a remote server
+
+Provide `--endpoint` along with `--access-key` and `--access-secret` to deploy to a remote server. If you omit the key pair but provide an endpoint, the CLI will prompt you to open a DID Connect page to generate a new access key.
+
+```bash
+blocklet deploy .blocklet/bundle \
+  --endpoint https://my-server.example.com \
+  --access-key AKxxxxxxxxxxxxxxxx \
+  --access-secret SKxxxxxxxxxxxxxxxx \
+  --app-id zNKr34afd...
+```
+
+<Note>
+Access keys are tied to a specific app DID. Generate them from the Blocklet Server dashboard under **Settings → Access Keys**, or let the CLI open the connect page by running `blocklet deploy` with only `--endpoint`.
+</Note>
+
+## Incremental deployment
+
+The `--incremental` flag fetches a diff from the server and uploads only new or changed files, reducing upload time for large blocklets with frequent small changes.
+
+```bash
+blocklet deploy .blocklet/bundle \
+  --endpoint https://my-server.example.com \
+  --access-key AKxxxxxxxxxxxxxxxx \
+  --access-secret SKxxxxxxxxxxxxxxxx \
+  --app-id zNKr34afd... \
+  --incremental
+```
+
+## Mount point resolution
+
+When deploying a blocklet that has a mount point (i.e. it exposes a web interface), the CLI resolves the mount path in this order:
+
+1. `--mount-point` flag
+2. `BLOCKLET_DEPLOY_MOUNT_POINT` environment variable
+3. A URL-friendly slug derived from the blocklet's `title` or `name`
+
+## Environment variables
+
+| Variable | Description |
+|----------|-------------|
+| `BLOCKLET_DEPLOY_APP_DID` | Fallback for `--app-id` when the flag is not set |
+| `BLOCKLET_DEPLOY_APP_ID` | Also checked when `BLOCKLET_DEPLOY_APP_DID` is not set |
+| `BLOCKLET_DEPLOY_MOUNT_POINT` | Fallback mount point when `--mount-point` is not set |
+
+## Deploy workflow
+
+<Steps>
+  <Step title="Bundle the blocklet">
+    Run `blocklet bundle` in your project directory to produce the bundle in `.blocklet/bundle`.
+  </Step>
+  <Step title="Verify the bundle">
+    The CLI reads the release manifest (`release/blocklet.json`) and the tarball. If the release does not exist, it creates one automatically.
+  </Step>
+  <Step title="Compute the file manifest">
+    The CLI hashes every file in the bundle directory. Files inside `node_modules` are rejected — do not include them in a bundle.
+  </Step>
+  <Step title="Upload">
+    The tarball is POSTed to the server's GraphQL endpoint, signed with the access key. Upload timeout is 30 minutes.
+  </Step>
+  <Step title="Install or upgrade">
+    The server installs the blocklet if it is new, or upgrades it in place if a previous version exists.
+  </Step>
+</Steps>
+
+## Examples
+
+```bash
+# Deploy to the local server as a component of an existing app
+blocklet deploy .blocklet/bundle --app-id zNKr34afd...
+
+# Deploy to a remote server with explicit credentials
+blocklet deploy .blocklet/bundle \
+  --endpoint https://my-server.example.com \
+  --access-key AKxxxxxxxxxxxxxxxx \
+  --access-secret SKxxxxxxxxxxxxxxxx \
+  --app-id zNKr34afd...
+
+# Deploy with a custom mount point
+blocklet deploy .blocklet/bundle \
+  --app-id zNKr34afd... \
+  --mount-point /my-tool
+
+# Incremental deploy to save upload time
+blocklet deploy .blocklet/bundle \
+  --endpoint https://my-server.example.com \
+  --access-key AKxxxxxxxxxxxxxxxx \
+  --access-secret SKxxxxxxxxxxxxxxxx \
+  --app-id zNKr34afd... \
+  --incremental
+```
+
+<Warning>
+Deploying over HTTP (not HTTPS) to a non-localhost endpoint is allowed but will trigger a warning. Use HTTPS for any remote server to avoid exposing your access key in transit.
+</Warning>

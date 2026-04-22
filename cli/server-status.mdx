@@ -1,0 +1,105 @@
+---
+title: "blocklet server status — Show server and blocklet status"
+description: "Display the running state of the Blocklet Server daemon, installed blocklets, routing and database providers, data directory, and access URLs."
+---
+
+`blocklet server status` queries the PM2 process manager and the server's internal database to produce a summary of the server's current state. It shows the daemon status, operating mode, data directory, installed blocklets with their statuses, and the URLs you can use to reach the server and its blocklets.
+
+## Usage
+
+```bash
+blocklet server status [options]
+```
+
+## Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-a, --all` | `false` | Show all installed blocklets without pagination (default shows the first 20) |
+| `--force-intranet` | `false` | Display only intranet URLs, ignoring any external IP addresses |
+
+## Sample output
+
+```
+Blocklet Server status: Running (3 minutes ago)
+Blocklet Server mode: Production
+Blocklet Server Data Directory: /home/user/.blocklet/server
+Blocklet Server Router Engine: nginx
+Blocklet Server Database: sqlite
+
+Blocklets Status (showing 2 of 2):
+┌──────────────────────────────┬───────────────┬──────────────────────────────────────────────────────────────────────┐
+│ Name                         │ Status        │ URL                                                                  │
+├──────────────────────────────┼───────────────┼──────────────────────────────────────────────────────────────────────┤
+│ My Blocklet                  │ Running       │ https://abc123.did.abtnet.io                                         │
+│ Another Blocklet             │ Stopped       │ https://def456.did.abtnet.io                                         │
+└──────────────────────────────┴───────────────┴──────────────────────────────────────────────────────────────────────┘
+
+You can access your blocklet server with either of the following URLs:
+  http://192.168.1.10
+  https://192.168.1.10
+```
+
+## Output fields
+
+**Server summary**
+
+| Field | Description |
+|-------|-------------|
+| Status | Current PM2 process state with uptime (see status values below) |
+| Mode | Operating mode: `Production`, `Debug`, `Maintenance`, or `Serverless` |
+| Data Directory | Path to the `.blocklet/` directory in use |
+| Router Engine | Routing provider, e.g. `nginx` |
+| Database | Database backend, e.g. `sqlite` or `postgres` |
+
+**Blocklets table**
+
+| Column | Description |
+|--------|-------------|
+| Name | Display title of the blocklet |
+| Status | Current blocklet lifecycle state (see status values below) |
+| URL | Public URL derived from the blocklet's DID and the configured domain |
+
+## Status values
+
+**Server status**
+
+| Status | Meaning |
+|--------|---------|
+| `Running` | The daemon process is online and healthy |
+| `Starting` | The daemon is launching (PM2 state: `launching`) |
+| `Stopping` | The daemon is in the process of shutting down |
+| `Stopped` | The daemon is not running |
+| `Error` | The daemon exited with an error |
+
+**Blocklet status**
+
+| Status | Meaning |
+|--------|---------|
+| `Running` | The blocklet is active and serving requests |
+| `Starting` | The blocklet process is starting up |
+| `Stopped` | The blocklet is installed but not running |
+| `Waiting` | The blocklet is queued to start |
+| `Restarting` | The blocklet is restarting after a crash or manual trigger |
+| `Downloading` | A new version is being downloaded |
+
+## Examples
+
+```bash
+# Show status with default pagination (first 20 blocklets)
+blocklet server status
+
+# Show all blocklets regardless of how many are installed
+blocklet server status --all
+
+# Show status using only intranet URLs
+blocklet server status --force-intranet
+```
+
+<Note>
+If the server is not running, the command prints `Blocklet Server is not started` and exits with code 0.
+</Note>
+
+<Tip>
+When the total number of installed blocklets exceeds 20, the command prints a hint to use `--all`. Use this flag when you need to audit every blocklet's state in a single output.
+</Tip>

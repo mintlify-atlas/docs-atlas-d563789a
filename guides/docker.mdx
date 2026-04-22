@@ -1,0 +1,244 @@
+---
+title: "Running Blocklet Server in Docker and Docker Compose"
+description: "Deploy Blocklet Server with Docker: choose from three registries, persist data in /data, tune with environment variables, and run blocklets as containers."
+---
+
+Docker is the recommended way to run Blocklet Server in production. The official image bundles the server, nginx gateway, and all required dependencies into a single container. Persistent data lives in a mounted volume at `/data`, so you can update the container image without losing blocklet data, configurations, or logs.
+
+## Pulling the image
+
+The image is published to three registries. All registries receive the same builds — choose based on your network access and pull rate limits.
+
+<CodeGroup>
+
+```bash Docker Hub
+docker pull arcblock/blocklet-server
+```
+
+```bash GitHub Container Registry
+docker pull ghcr.io/arcblock/blocklet-server:latest
+```
+
+```bash AWS ECR Public
+docker pull public.ecr.aws/i0s0w0c9/blocklet-server:latest
+```
+
+</CodeGroup>
+
+## Basic docker run
+
+```bash
+docker run -d \
+  -p 80:80 \
+  -p 443:443 \
+  -v /path/to/your/data:/data \
+  arcblock/blocklet-server
+```
+
+Open `http://localhost` to access the dashboard after the container starts.
+
+### Important flags
+
+| Flag | Purpose |
+|---|---|
+| `-p 80:80` | HTTP traffic through the nginx gateway |
+| `-p 443:443` | HTTPS traffic through the nginx gateway |
+| `-v /path/to/data:/data` | Persistent storage for all server state |
+| `-d` | Run detached (in the background) |
+
+The container's `CMD` runs `blocklet server start -a -u --keep-alive`, which auto-initializes a new server instance on first boot and keeps the process alive.
+
+<Warning>
+Always mount a host directory or named volume to `/data`. Without a persistent mount, all blocklets, configurations, and logs are lost when the container stops.
+</Warning>
+
+## What lives in /data
+
+The `/data` directory is the single source of truth for the server instance:
+
+```
+/data/
+├── .blocklet-server/         # Server config (config.yml, keys)
+├── blocklets/                # Installed blocklet code and data
+├── logs/                     # Server and blocklet log files
+│   ├── _abtnode/             # Daemon logs (rotated daily)
+│   └── <blocklet-name>/      # Per-blocklet output and error logs
+└── core/
+    └── db-cache.db           # SQLite cache database (default)
+```
+
+Back up `/data` to preserve your complete server state. Restoring from backup is as simple as mounting the backup directory.
+
+## Docker Compose
+
+For production deployments, Docker Compose provides a reproducible, version-controlled setup. This example adds PostgreSQL for improved concurrency and Redis for distributed caching:
+
+```yaml docker-compose.yml
+version: "3.9"
+
+services:
+  blocklet-server:
+    image: arcblock/blocklet-server
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - blocklet-data:/data
+    environment:
+      ABT_NODE_LOG_LEVEL: info
+      ABT_NODE_POSTGRES_URL: postgresql://blocklet:secret@postgres:5432/blocklet_server
+      ABT_NODE_CACHE_REDIS_URL: redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: blocklet_server
+      POSTGRES_USER: blocklet
+      POSTGRES_PASSWORD: secret
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U blocklet"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+
+volumes:
+  blocklet-data:
+  postgres-data:
+  redis-data:
+```
+
+Start the stack:
+
+```bash
+docker compose up -d
+```
+
+View logs:
+
+```bash
+docker compose logs -f blocklet-server
+```
+
+## Docker-specific environment variables
+
+Pass environment variables to the container with `-e` flags or in the `environment:` section of your Compose file. All `ABT_NODE_*` variables are supported; the ones most relevant to Docker deployments are:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ABT_NODE_DOCKER_MEMORY` | `512m` | Memory limit applied to each blocklet Docker container |
+| `ABT_NODE_DOCKER_CPUS` | `1` | CPU limit applied to each blocklet Docker container |
+| `ABT_NODE_DOCKER_DISK_SIZE` | `10g` | Disk size limit applied to each blocklet Docker container |
+| `ABT_NODE_NOT_ALLOW_DOCKER` | `0` | Set to `1` to prevent Blocklet Server from launching any Docker containers |
+| `ABT_NODE_SKIP_DOCKER_CHOWN` | `0` | Set to `1` to skip `chown` operations inside managed containers |
+| `ABT_NODE_POSTGRES_URL` | None | PostgreSQL connection URL (SQLite used when unset) |
+| `ABT_NODE_CACHE_REDIS_URL` | None | Redis connection URL (in-memory cache used when unset) |
+| `ABT_NODE_LOG_LEVEL` | `info` | Log verbosity: `error`, `warn`, `info`, `debug` |
+
+Example with resource limits:
+
+```bash
+docker run -d \
+  -p 80:80 \
+  -p 443:443 \
+  -v /path/to/data:/data \
+  -e ABT_NODE_DOCKER_MEMORY=1g \
+  -e ABT_NODE_DOCKER_CPUS=2 \
+  -e ABT_NODE_LOG_LEVEL=info \
+  arcblock/blocklet-server
+```
+
+## Running blocklets as Docker containers
+
+Blocklet Server can run individual blocklets as Docker containers, isolating each blocklet in its own container with independent resource limits. When a blocklet is Docker-enabled:
+
+1. Blocklet Server pulls or builds the blocklet's Docker image.
+2. A container is launched with the blocklet's assigned port and environment variables injected.
+3. Nginx routes traffic to the container exactly as it does for process-based blocklets.
+4. Resource limits from `ABT_NODE_DOCKER_MEMORY`, `ABT_NODE_DOCKER_CPUS`, and `ABT_NODE_DOCKER_DISK_SIZE` are applied per container.
+
+To run blocklets as containers, the host Docker socket or a Docker API endpoint must be accessible to the Blocklet Server container. Mount the Docker socket:
+
+```bash
+docker run -d \
+  -p 80:80 \
+  -p 443:443 \
+  -v /path/to/data:/data \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  arcblock/blocklet-server
+```
+
+<Warning>
+Mounting the Docker socket grants the container full control over the host's Docker daemon. Use this only in trusted environments. For public-facing production deployments, evaluate whether the isolation benefit outweighs the security surface area.
+</Warning>
+
+## Networking considerations
+
+<AccordionGroup>
+  <Accordion title="Ports 80 and 443 already in use">
+    If another process (Apache, another nginx, or an existing service) already holds ports 80 and 443, map to alternate host ports:
+
+    ```bash
+    docker run -d \
+      -p 8080:80 \
+      -p 8443:443 \
+      -v /path/to/data:/data \
+      arcblock/blocklet-server
+    ```
+
+    Then configure your upstream proxy or load balancer to forward to ports 8080 and 8443.
+  </Accordion>
+  <Accordion title="Container-to-container communication">
+    When running Blocklet Server alongside other services in Docker Compose, use service names as hostnames within the same network. For example, `postgres` and `redis` are reachable by their service names from the `blocklet-server` container, which is why the example Compose file uses `postgres:5432` and `redis:6379` in the connection URLs.
+  </Accordion>
+  <Accordion title="IPv6">
+    IPv6 support is disabled by default. Enable it with:
+
+    ```bash
+    -e ABT_NODE_ENABLE_IPV6=1
+    ```
+
+    You must also configure the Docker daemon and any upstream load balancer for IPv6.
+  </Accordion>
+  <Accordion title="Running behind a reverse proxy">
+    If you place Blocklet Server behind an external reverse proxy (Cloudflare, Traefik, HAProxy), configure the proxy to pass the standard forwarding headers (`X-Forwarded-For`, `X-Forwarded-Proto`, `X-Real-IP`). Blocklet Server's nginx gateway reads these headers to generate correct URLs and apply IP-based access controls.
+  </Accordion>
+</AccordionGroup>
+
+## Updating the container
+
+Because all state lives in `/data`, updating is a simple image swap:
+
+```bash
+docker pull arcblock/blocklet-server
+docker stop <container-id>
+docker rm <container-id>
+docker run -d \
+  -p 80:80 \
+  -p 443:443 \
+  -v /path/to/data:/data \
+  arcblock/blocklet-server
+```
+
+With Docker Compose:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+The new container mounts the same `/data` volume and the server auto-initializes from the existing configuration.

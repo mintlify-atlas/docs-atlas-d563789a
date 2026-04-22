@@ -1,0 +1,419 @@
+---
+title: "Blocklet Lifecycle: States, Hooks, and Events Guide"
+description: "All 14 blocklet status values, the 8 lifecycle hooks, the events system, and how blue-green deployment achieves zero-downtime upgrades."
+---
+
+A blocklet moves through a defined set of states from the moment it is first installed to when it is removed. Blocklet Server manages this lifecycle by coordinating PM2 process management, a hooks system that lets blocklets run custom scripts at key points, and an event system that notifies other parts of the platform when something changes. Understanding these three layers—states, hooks, and events—gives you the complete picture of how a blocklet behaves at runtime.
+
+## Status definitions
+
+Blocklets are tracked using a numeric status enum. The values below are the complete list:
+
+| Status | Value | Description |
+| --- | --- | --- |
+| `added` | 0 | Record created in database; download has not yet begun |
+| `downloading` | 1 | Bundle or archive is being downloaded |
+| `downloaded` | 2 | Download completed (deprecated) |
+| `installing` | 3 | Installation in progress (deprecated) |
+| `installed` | 4 | Installation complete; blocklet is ready to start |
+| `starting` | 5 | Start process is in progress |
+| `running` | 6 | Blocklet is running and healthy |
+| `stopping` | 7 | Stop process is in progress |
+| `stopped` | 8 | Blocklet is stopped |
+| `error` | 9 | Error state (install, start, or upgrade failed) |
+| `upgrading` | 10 | Upgrade process is in progress |
+| `restarting` | 11 | Restart in progress (deprecated) |
+| `corrupted` | 12 | Corrupted state (deprecated) |
+| `waiting` | 13 | Queued for download |
+| `deleted` | 14 | Marked as deleted |
+
+Blocklets also carry a `controller` status for authorization:
+
+| Controller status | Value | Description |
+| --- | --- | --- |
+| `normal` | 0 | Normal operation |
+| `suspended` | 10 | Blocklet is suspended (e.g., license expired) |
+
+## State transition diagram
+
+```
+                                    ┌──────────────────────────────────────┐
+                                    │                                      │
+                                    ▼                                      │
+┌─────────┐   ┌─────────┐   ┌─────────────┐   ┌────────────┐   ┌─────────────┐
+│  added  │──▶│ waiting │──▶│ downloading │──▶│ installing │──▶│  installed  │
+└─────────┘   └─────────┘   └─────────────┘   └────────────┘   └─────────────┘
+                                    │                                    │
+                                    │ (error)                            │ start
+                                    ▼                                    ▼
+                              ┌─────────┐                          ┌──────────┐
+                              │  error  │◀─────────────────────────│ starting │
+                              └─────────┘                          └──────────┘
+                                    ▲                                    │
+                                    │ (error)                            │ (success)
+                                    │                                    ▼
+┌─────────┐   ┌──────────┐   ┌──────────┐                         ┌─────────┐
+│ deleted │◀──│ stopping │◀──│  running │◀────────────────────────│ running │
+└─────────┘   └──────────┘   └──────────┘                         └─────────┘
+                   │               │ upgrade                             ▲
+                   ▼               ▼                                     │
+             ┌─────────┐   ┌───────────┐                                 │
+             │ stopped │──▶│ upgrading │─────────────────────────────────┘
+             └─────────┘   └───────────┘
+                   │
+                   │ start
+                   ▼
+             ┌──────────┐
+             │ starting │
+             └──────────┘
+```
+
+### Valid state transitions
+
+| From | To | Trigger |
+| --- | --- | --- |
+| (none) | `added` | Install request |
+| `added` | `waiting` | Download queued |
+| `waiting` | `downloading` | Download starts |
+| `downloading` | `installing` | Download completes |
+| `installing` | `installed` | Installation completes |
+| `installing` | `error` | Installation fails |
+| `installed` | `starting` | Start request |
+| `starting` | `running` | Process starts successfully |
+| `starting` | `error` | Start fails |
+| `running` | `stopping` | Stop request |
+| `stopping` | `stopped` | Process stops |
+| `stopped` | `starting` | Start request |
+| `stopped` | `deleted` | Delete request |
+| `running` | `upgrading` | Upgrade request |
+| `upgrading` | `running` | Upgrade completes |
+| `upgrading` | `error` | Upgrade fails |
+| `error` | `starting` | Retry start |
+| `error` | `deleted` | Delete request |
+
+## Lifecycle operations
+
+<AccordionGroup>
+  <Accordion title="Install">
+    Installation adds a new blocklet to the server. The flow supports three source types: restoring from a backup, fetching from a URL or store, and creating a new blocklet in place.
+
+    ```
+    install(params)
+        │
+        ▼
+    Determine install type (RESTORE / URL+STORE / CREATE)
+        │
+        ▼
+    _addBlocklet()
+      - Create database record
+      - Status: added
+      - Emit: blocklet.added
+        │
+        ▼
+    _downloadAndInstall()
+      - added → waiting → downloading → installing
+        │
+        ▼
+    _installBlocklet()
+      - Run preInstall hook
+      - Run postInstall hook
+      - Run preFlight hook
+      - Status: installing → installed
+      - Emit: blocklet.installed
+      - Initialize team
+    ```
+
+    **Status flow**: `added → waiting → downloading → installing → installed`
+
+    **Hooks**: `preInstall`, `postInstall`, `preFlight`
+
+    **Events emitted**: `blocklet.added`, `blocklet.installed` (or `blocklet.installFailed`)
+  </Accordion>
+
+  <Accordion title="Upgrade">
+    Upgrade replaces an existing blocklet with a new version. The old bundle is backed up before replacement so the server can roll back if the upgrade fails.
+
+    ```
+    upgrade(params)
+        │
+        ▼
+    _downloadAndInstall() with UPGRADE flag
+      - current → waiting → downloading
+        │
+        ▼
+    _onUpgrade()
+      - Stop existing process
+      - Status: → upgrading
+      - Run migration scripts
+      - Replace bundle with new version
+      - Status: upgrading → installed
+        │
+        ▼
+    Post-upgrade
+      - Emit: blocklet.upgraded
+      - Refresh routing
+      - Optionally auto-start
+    ```
+
+    **Status flow**: `current → downloading → upgrading → installed`
+
+    **Hooks**: `preInstall`, `postInstall`
+
+    **Events emitted**: `blocklet.upgraded` (or `blocklet.upgradeFailed`)
+  </Accordion>
+
+  <Accordion title="Start">
+    Start launches the blocklet process via PM2 and runs health checks. Components are started in dependency order: entry components with process engines run first, then resource-only non-entry components.
+
+    ```
+    start({ did, componentDids, ... })
+        │
+        ▼
+    Acquire start lock (prevents concurrent starts)
+        │
+        ▼
+    Validation
+      - Check blocklet exists
+      - Check controller status (not suspended)
+      - Check required environments
+        │
+        ▼
+    Run preStart hook
+        │
+        ▼
+    Start entry components (PM2)
+      - Status: starting → running
+        │
+        ▼
+    Start non-entry components
+        │
+        ▼
+    Health check (checkBlockletProcessHealthy)
+        │
+        ▼
+    Blue-green deployment (if enabled)
+      - Emit: blocklet.blueOrGreenStarted
+        │
+        ▼
+    Emit: blocklet.started
+    ```
+
+    **Status flow**: `installed/stopped → starting → running`
+
+    **Hooks**: `preStart`, `postStart`
+
+    **Events emitted**: `blocklet.started` (or `blocklet.startFailed`)
+  </Accordion>
+
+  <Accordion title="Stop">
+    Stop gracefully shuts down the PM2 process. The `preStop` hook runs before the process receives SIGTERM; if it does not exit within 30 seconds, SIGKILL is sent.
+
+    ```
+    stop({ did, reason, ... })
+        │
+        ▼
+    Check if already stopped (return early if so)
+        │
+        ▼
+    Status: running → stopping
+    Emit: blocklet.statusChange
+        │
+        ▼
+    deleteBlockletProcess()
+      - Run preStop hook
+      - SIGTERM → wait (30s) → SIGKILL
+        │
+        ▼
+    Status: stopping → stopped
+    Emit: blocklet.stopped
+    ```
+
+    **Status flow**: `running → stopping → stopped`
+
+    **Hooks**: `preStop`
+
+    **Events emitted**: `blocklet.stopped`
+  </Accordion>
+
+  <Accordion title="Restart">
+    Restart is a sequential stop followed by a start. No dedicated `restarting` status is used in current versions; the blocklet passes through `stopping → stopped → starting → running`.
+
+    **Status flow**: `running → stopping → stopped → starting → running`
+
+    **Hooks**: `preStop`, `preStart`
+
+    **Events emitted**: `blocklet.stopped`, `blocklet.started`
+  </Accordion>
+
+  <Accordion title="Remove">
+    Remove deletes the blocklet record and optionally cleans up data, log, and config directories. The `preUninstall` hook runs before the process is stopped.
+
+    ```
+    delete({ did, keepData, keepLogsDir, keepConfigs })
+        │
+        ▼
+    Validate blocklet is deletable
+        │
+        ▼
+    deleteBlockletProcess()
+      - Run preUninstall hook
+      - Stop PM2 process
+        │
+        ▼
+    _deleteBlocklet()
+      - Status: → deleted
+      - Cleanup database records
+      - Cleanup filesystem (cache, data, logs, configs)
+      - Remove team data
+        │
+        ▼
+    Emit: blocklet.removed
+    ```
+
+    **Status flow**: `any → deleted`
+
+    **Hooks**: `preUninstall`
+
+    **Events emitted**: `blocklet.removed`
+  </Accordion>
+</AccordionGroup>
+
+## Lifecycle summary table
+
+| Operation | Status flow | Hooks | Events |
+| --- | --- | --- | --- |
+| Install | `added → waiting → downloading → installing → installed` | `preInstall`, `postInstall`, `preFlight` | `added`, `installed`, `installFailed` |
+| Upgrade | `current → downloading → upgrading → installed` | `preInstall`, `postInstall` | `upgraded`, `upgradeFailed` |
+| Start | `installed/stopped → starting → running` | `preStart`, `postStart` | `started`, `startFailed` |
+| Stop | `running → stopping → stopped` | `preStop` | `stopped` |
+| Restart | `running → stopping → started → running` | `preStop`, `preStart` | `stopped`, `started` |
+| Remove | `any → deleted` | `preUninstall` | `removed` |
+| Config | `installed/stopped` | `preConfig` | `updated` |
+
+## Hooks system
+
+Hooks allow a blocklet to execute custom shell scripts at specific points in its lifecycle. Each hook has a defined behavior when the script exits with a non-zero code.
+
+| Hook | When it runs | Exit on error |
+| --- | --- | --- |
+| `preInstall` | Before installation begins | Yes |
+| `postInstall` | After successful installation | No |
+| `preFlight` | After install, before first start | Yes |
+| `preStart` | Before the blocklet process starts | Yes |
+| `postStart` | After the process starts successfully | No |
+| `preStop` | Before the process is stopped | No |
+| `preUninstall` | Before uninstallation or deletion | No |
+| `preConfig` | Before a configuration update is applied | Yes |
+
+Hooks marked **Exit on error: Yes** will cause the corresponding operation to fail and enter the `error` state if the script returns a non-zero exit code. Hooks marked **No** are informational—failures are logged and a notification is created, but the operation continues.
+
+### Hook configuration in blocklet.yml
+
+```yaml
+hooks:
+  preInstall: scripts/pre-install.sh
+  postInstall: scripts/post-install.sh
+  preFlight: scripts/pre-flight.sh
+  preStart: scripts/pre-start.sh
+  postStart: scripts/post-start.sh
+  preStop: scripts/pre-stop.sh
+  preUninstall: scripts/pre-uninstall.sh
+```
+
+When a hook executes, Blocklet Server passes the following environment variables to the script:
+
+- `BLOCKLET_HOOK_NAME` — name of the current hook
+- `NODE_OPTIONS` — security options
+- All standard blocklet environment variables (`BLOCKLET_APP_DIR`, `BLOCKLET_DATA_DIR`, `BLOCKLET_LOG_DIR`, etc.)
+
+## Events system
+
+Events are emitted at lifecycle points and consumed by other server subsystems (routing, DID document publishing, notifications, webhooks).
+
+### Blocklet events
+
+| Event | When emitted | Payload |
+| --- | --- | --- |
+| `blocklet.added` | Record created in database | `{ did, meta }` |
+| `blocklet.installed` | Installation complete | `{ did, meta }` |
+| `blocklet.installFailed` | Installation failed | `{ did, error }` |
+| `blocklet.downloadFailed` | Download failed | `{ did, error }` |
+| `blocklet.upgraded` | Upgrade complete | `{ did, meta, oldVersion }` |
+| `blocklet.removed` | Blocklet removed | `{ did }` |
+| `blocklet.started` | Started successfully | `{ did }` |
+| `blocklet.startFailed` | Start failed | `{ did, error }` |
+| `blocklet.stopped` | Stopped | `{ did, reason }` |
+| `blocklet.statusChange` | Status updated | `{ did, status, oldStatus }` |
+| `blocklet.updated` | State changed | `{ did, changes }` |
+| `blocklet.blueOrGreenStarted` | Blue-green instance ready | `{ did, isGreen }` |
+
+### Component events
+
+| Event | When emitted |
+| --- | --- |
+| `blocklet.componentInstalled` | Component installed |
+| `blocklet.componentInstallFailed` | Component install failed |
+| `blocklet.componentUpgraded` | Component upgraded |
+| `blocklet.componentUpgradeFailed` | Component upgrade failed |
+| `blocklet.componentRemoved` | Component removed |
+
+### How events drive server behavior
+
+| Event | Handler action |
+| --- | --- |
+| `blocklet.added` | Early routing setup for DNS warm-up |
+| `blocklet.installed` | Full routing setup + DID document update |
+| `blocklet.upgraded` | Backup sites, update routing |
+| `blocklet.removed` | Cleanup routing, set DID document state to `deleted` |
+| `blocklet.started` | Update DID document state + start runtime monitoring |
+| `blocklet.stopped` | Update DID document state |
+| `blocklet.blueOrGreenStarted` | Switch nginx traffic to green instance |
+
+## Blue-green deployment
+
+Blue-green deployment enables zero-downtime upgrades by running the old version (blue) and the new version (green) simultaneously. Traffic stays on blue until green is healthy, then nginx switches over.
+
+```
+Before upgrade:
+  v1 (blue) ← all traffic
+
+During upgrade:
+  v1 (blue)  ← current traffic
+  v2 (green) ← downloading, installing, starting
+
+After green is healthy:
+  v1 (blue)  ← idle (fallback / shut down)
+  v2 (green) ← all traffic
+```
+
+The `greenStatus` and `greenPorts` fields on `BlockletChild` track the parallel green instance:
+
+```javascript
+blocklet = {
+  status: BlockletStatus.running,      // blue instance
+  greenStatus: BlockletStatus.running, // green instance
+  children: [
+    {
+      status: BlockletStatus.running,
+      greenStatus: BlockletStatus.running,
+      ports: { BLOCKLET_PORT: 8090 },      // blue ports
+      greenPorts: { BLOCKLET_PORT: 8091 }, // green ports
+    },
+  ],
+};
+```
+
+To disable blue-green deployment for testing or debugging:
+
+```bash
+export ABT_NODE_DISABLE_BLUE_GREEN=1
+```
+
+## Component status aggregation
+
+The parent blocklet's status is computed from its children:
+
+- If any child is `error` → parent is `error`
+- If any child is `running` → parent is `running`
+- If all children are `stopped` → parent is `stopped`
+- Otherwise → parent inherits the most significant child status

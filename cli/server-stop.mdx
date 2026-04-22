@@ -1,0 +1,64 @@
+---
+title: "blocklet server stop — Stop the server and blocklets"
+description: "Gracefully shut down the Blocklet Server daemon, service gateway, routing engine, and all running blocklets, with an option for an immediate forced stop."
+---
+
+`blocklet server stop` sends a shutdown notification to connected dashboard users, stops the routing engine, then terminates the daemon, service, and event-hub PM2 processes in order. It also updates the status of running blocklets to `stopped` in the database and cleans up any Docker containers managed by Blocklet Server.
+
+## Usage
+
+```bash
+blocklet server stop [options]
+```
+
+## Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-f, --force` | `false` | Immediately kill all Blocklet Server processes without waiting for a graceful shutdown |
+
+## Graceful shutdown behavior
+
+Without `--force`, the stop sequence is:
+
+1. Connects to the running server and waits for the node to be ready.
+2. Checks for any blocklets running in development mode — if one is found, the stop is aborted and you are asked to press `Ctrl+C` in that blocklet's terminal first.
+3. Updates the status of all running, starting, or downloading blocklets to `waiting`, then `stopped`.
+4. Publishes a `NODE_STOPPED` event and waits 2 seconds so connected browser clients can display a shutdown message.
+5. Stops the routing engine.
+6. Kills the daemon, service, and event-hub PM2 processes in sequence.
+7. Updates the server node status to `stopped` in the database.
+8. Stops any Docker containers managed by Blocklet Server.
+
+The graceful shutdown has a **5-minute timeout**. If it does not complete within that window, an error is printed with a hint to run `blocklet server stop --force`.
+
+## Force stop behavior
+
+With `--force`, the stop bypasses the graceful sequence:
+
+1. Clears internal caches.
+2. Removes routing engine configuration files.
+3. Updates all running blocklet statuses to `stopped` in the database.
+4. Deletes all blocklet and daemon PM2 processes.
+5. Kills the PM2 daemon.
+6. Stops any Docker containers managed by Blocklet Server.
+
+Force stop has a **20-second timeout**.
+
+## Examples
+
+```bash
+# Graceful shutdown
+blocklet server stop
+
+# Immediate forced stop (use when the server is unresponsive)
+blocklet server stop --force
+```
+
+<Note>
+If a blocklet is running in development mode (`blocklet dev`), the graceful stop will be blocked. Stop the development server first by pressing `Ctrl+C` in its terminal, then run `blocklet server stop`.
+</Note>
+
+<Tip>
+If a graceful stop times out or the server is in a bad state, run `blocklet server stop --force` to clean up all processes unconditionally.
+</Tip>

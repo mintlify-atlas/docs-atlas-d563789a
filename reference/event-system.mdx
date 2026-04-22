@@ -1,0 +1,361 @@
+---
+title: 'Event System: Lifecycle Events and EventBus'
+description: 'Reference for Blocklet Server event-driven architecture: lifecycle events, EventBus publish/subscribe, webhook delivery pipeline, and event schemas.'
+---
+
+Blocklet Server uses an event-driven architecture that connects all parts of the platform. Two distinct event mechanisms work together: **lifecycle events**, which the server emits as blocklets move through states (installing, starting, stopping, and so on), and the **EventBus**, which lets blocklet components publish and subscribe to their own custom domain events. Webhooks bridge both mechanisms to external HTTP endpoints.
+
+## Lifecycle events
+
+The server emits lifecycle events whenever a blocklet's state changes. These events are consumed internally (for example, to update routing or DID documents) and can also be observed by blocklets that subscribe to them via the Notification service.
+
+### Blocklet events
+
+| Event | When emitted | Payload |
+|---|---|---|
+| `blocklet.added` | Blocklet record created in the database | `{ did, meta }` |
+| `blocklet.installed` | Installation completed successfully | `{ did, meta }` |
+| `blocklet.installFailed` | Installation failed | `{ did, error }` |
+| `blocklet.downloadFailed` | Bundle download failed | `{ did, error }` |
+| `blocklet.upgraded` | Upgrade completed successfully | `{ did, meta, oldVersion }` |
+| `blocklet.started` | Blocklet process started and healthy | `{ did }` |
+| `blocklet.startFailed` | Start failed after all retries | `{ did, error }` |
+| `blocklet.stopped` | Blocklet process stopped | `{ did, reason }` |
+| `blocklet.statusChange` | Any status transition occurred | `{ did, status, oldStatus }` |
+| `blocklet.updated` | Blocklet state changed (config, settings) | `{ did, changes }` |
+| `blocklet.removed` | Blocklet deleted from the server | `{ did }` |
+| `blocklet.blueOrGreenStarted` | Blue-green deployment instance started | `{ did, isGreen }` |
+
+### Component events
+
+| Event | When emitted |
+|---|---|
+| `blocklet.componentInstalled` | A child component was installed successfully |
+| `blocklet.componentInstallFailed` | A child component installation failed |
+| `blocklet.componentUpgraded` | A child component was upgraded |
+| `blocklet.componentUpgradeFailed` | A child component upgrade failed |
+| `blocklet.componentRemoved` | A child component was removed |
+
+### Internal events (inter-process)
+
+These events are used for communication between server subsystems and are not typically consumed by blocklet code directly.
+
+| Event | Purpose |
+|---|---|
+| `blocklet.appConfigChanged` | App configuration was changed |
+| `blocklet.appSettingChanged` | App-level settings changed |
+| `blocklet._componentInstalled` | Internal component install signal |
+| `blocklet._componentUpgraded` | Internal component upgrade signal |
+| `blocklet._componentUpdated` | Internal component update signal |
+| `blocklet._componentStarted` | Internal component start signal |
+| `blocklet._componentStopped` | Internal component stop signal |
+| `blocklet._componentRemoved` | Internal component remove signal |
+| `blocklet._componentConfigChanged` | Internal component config change signal |
+| `blocklet.componentsUpdated` | All components updated |
+
+### What the server does with lifecycle events
+
+| Event | Server action |
+|---|---|
+| `blocklet.added` | Early routing setup for DNS warm-up |
+| `blocklet.installed` | Full routing setup + DID document update |
+| `blocklet.upgraded` | Backup sites, update routing |
+| `blocklet.removed` | Remove routing, set DID document state to `deleted` |
+| `blocklet.started` | Update DID document state + start runtime monitoring |
+| `blocklet.stopped` | Update DID document state |
+| `blocklet.blueOrGreenStarted` | Update routing to point at the green instance |
+
+---
+
+## EventBus
+
+The EventBus lets components within an app communicate with each other using typed, structured events. It is the recommended way for blocklets to publish domain events (such as `order.created` or `payment.confirmed`) and have sibling components react to them.
+
+### Architecture
+
+The EventBus is implemented across four layers:
+
+1. **SDK layer** (`blocklet/node-sdk/`) — Developer-facing `publish` / `subscribe` / `unsubscribe` API
+2. **Services layer** (`core/blocklet-services/`) — WebSocket channel handler that validates permissions and broadcasts events
+3. **State/processing layer** (`core/state/`) — Event persistence and webhook delivery queues
+4. **Database models** (`core/models/`) — `WebhookEvent`, `WebhookAttempt`, `WebhookEndpoint` tables
+
+### Event schema
+
+EventBus events follow a schema inspired by [CloudEvents](https://cloudevents.io/):
+
+```typescript
+interface Event {
+  id: string;            // Unique event ID (auto-generated if not provided)
+  source: string;        // Component DID of the publisher (set server-side, cannot be forged)
+  type: string;          // Event type string, e.g. 'order.created'
+  time: string;          // ISO 8601 timestamp
+  spec_version: string;  // Schema version, currently '1.0.0'
+  object_type?: string;  // Optional: entity type for tracking
+  object_id?: string;    // Optional: entity ID for tracking
+  data: {
+    type: string;        // Content type, e.g. 'application/json'
+    object: any;         // The actual event payload
+    previous_attributes?: any; // Optional: previous state for change tracking
+  };
+}
+```
+
+### Publishing events
+
+Events must be declared in `blocklet.yml` before they can be published. Only the declaring component is allowed to publish an event type.
+
+```yaml
+# blocklet.yml
+events:
+  - type: order.created
+    description: Emitted when a new order is placed
+  - type: payment.confirmed
+    description: Emitted when a payment is successfully processed
+```
+
+```typescript
+import { Notification } from '@blocklet/sdk';
+
+await Notification.publish('order.created', {
+  data: {
+    object: {
+      orderId: 'order-123',
+      amount: 99.99,
+      currency: 'USD',
+      customerId: 'z1abc...',
+    },
+  },
+});
+```
+
+### Subscribing to events
+
+Any component mounted in the same app can subscribe to events from other components.
+
+```typescript
+import { Notification } from '@blocklet/sdk';
+
+// Subscribe during startup
+await Notification.subscribe((event) => {
+  console.log('Received event:', event.type, event.data.object);
+
+  if (event.type === 'order.created') {
+    handleNewOrder(event.data.object);
+  }
+});
+
+// Unsubscribe when shutting down
+Notification.unsubscribe(myHandler);
+```
+
+<Note>
+  Components do not receive their own events. The SDK automatically excludes events whose `source` matches
+  `BLOCKLET_COMPONENT_DID`, preventing a component from processing its own publications.
+</Note>
+
+### Event publishing flow
+
+```
+Your blocklet component
+  └─ Notification.publish('event.type', { data })
+     └─ Validate against Joi schema (SDK layer)
+        └─ HTTP POST to /api/send-to-event-bus
+           └─ Validate event declared in blocklet.yml
+              └─ Set source = BLOCKLET_COMPONENT_DID (server-enforced)
+                 └─ eventHub.broadcast(EVENT_BUS_EVENT, { appDid, event })
+                    └─ All subscriber callbacks invoked
+```
+
+### Event subscription flow
+
+```
+Notification.subscribe(callback)
+  └─ Connect to EventBus WebSocket channel
+     └─ On EVENT_BUS_EVENT received:
+        ├─ Filter: event.source !== BLOCKLET_COMPONENT_DID
+        └─ callback(event)
+```
+
+---
+
+## Webhook delivery
+
+The webhook system provides at-least-once delivery of EventBus events to external HTTP endpoints.
+
+### Delivery pipeline
+
+Webhook delivery uses a two-stage queue system:
+
+<Steps>
+  <Step title="Event published">
+    A component calls `Notification.publish()`. The event is validated and broadcast to the EventBus channel.
+  </Step>
+  <Step title="Event persisted">
+    The webhook event handler stores the event in the `webhook_events` table in the database before any delivery attempt.
+  </Step>
+  <Step title="Endpoint matching (queue 1)">
+    The `webhookEventQueue` (concurrency: 5) finds all enabled webhook endpoints that subscribe to the event type and source.
+  </Step>
+  <Step title="HTTP delivery (queue 2)">
+    The `webhookEndpointQueue` (concurrency: 10) sends an HTTP POST to each matching endpoint with a 3-minute timeout.
+  </Step>
+  <Step title="Retry on failure">
+    If delivery fails, the system retries up to 2 times (3 total attempts): after ~5 seconds, then ~10 seconds.
+  </Step>
+  <Step title="Disable on repeated failure">
+    If a webhook endpoint accumulates 10 or more consecutive failures, it is automatically disabled.
+  </Step>
+</Steps>
+
+### Delivery request format
+
+```http
+POST https://your-endpoint.example.com/webhook
+Content-Type: application/json
+X-Blocklet-Event: order.created
+X-Blocklet-Delivery: attempt-id-abc123
+
+{
+  "id": "event-uuid",
+  "source": "component-did",
+  "type": "order.created",
+  "time": "2024-01-15T10:30:00Z",
+  "spec_version": "1.0.0",
+  "data": {
+    "type": "application/json",
+    "object": {
+      "orderId": "order-123",
+      "amount": 99.99
+    }
+  }
+}
+```
+
+### Implementing an idempotent receiver
+
+Because the system provides at-least-once delivery (not exactly-once), your webhook receiver should handle duplicate events:
+
+```typescript
+import express from 'express';
+
+const app = express();
+const processedEvents = new Set<string>();
+
+app.post('/webhook', express.json(), async (req, res) => {
+  const event = req.body;
+
+  // Idempotency check
+  if (processedEvents.has(event.id)) {
+    return res.status(200).json({ message: 'Already processed' });
+  }
+
+  // Verify the event source if needed
+  if (!isTrustedSource(event.source)) {
+    return res.status(403).json({ error: 'Untrusted source' });
+  }
+
+  await processEvent(event);
+  processedEvents.add(event.id);
+
+  res.status(200).json({ success: true });
+});
+```
+
+### Delivery guarantees and limitations
+
+| Guarantee | Status |
+|---|---|
+| At-least-once delivery | Yes — retried up to 3 attempts |
+| Exactly-once delivery | No — receivers must be idempotent |
+| Ordered delivery | No — concurrent workers may deliver out of order |
+| HMAC signatures | Not yet available |
+
+<Warning>
+  Webhook delivery is not ordered. If ordering matters, include a monotonic sequence number or version field in your
+  event payload and handle out-of-order delivery in your receiver.
+</Warning>
+
+---
+
+## Database models
+
+Three database tables back the webhook system.
+
+### webhook_events
+
+Stores each EventBus event that needs webhook delivery.
+
+| Column | Type | Description |
+|---|---|---|
+| `id` | String | Primary key |
+| `type` | String | Event type (e.g. `order.created`) |
+| `source` | String | Component DID that published the event |
+| `apiVersion` | String | API version |
+| `objectType` | String | Optional entity type |
+| `objectId` | String | Optional entity ID |
+| `data` | JSON | Full event object |
+| `request` | JSON | Pre-formatted HTTP POST body |
+| `pendingWebhooks` | Integer | Count of pending delivery attempts |
+| `metadata` | JSON | Additional metadata |
+
+### webhook_attempts
+
+Tracks each individual delivery attempt for an event-endpoint pair.
+
+| Column | Type | Description |
+|---|---|---|
+| `id` | String | Primary key |
+| `eventId` | String | Foreign key to `webhook_events` |
+| `webhookId` | String | Foreign key to `webhook_endpoints` |
+| `status` | Enum | `pending`, `succeeded`, or `failed` |
+| `responseStatus` | Integer | HTTP response status code |
+| `responseBody` | JSON | Response body from the endpoint |
+| `retryCount` | Integer | Attempt number (0-indexed) |
+| `triggeredBy` | String | User DID if manually triggered |
+| `triggeredFrom` | String | Parent attempt ID for retries |
+
+### webhook_endpoints
+
+Stores registered webhook endpoint subscriptions.
+
+| Column | Type | Description |
+|---|---|---|
+| `id` | String | Primary key |
+| `url` | String | Destination URL |
+| `eventTypes` | JSON Array | Event types this endpoint subscribes to |
+| `enabled` | Boolean | Whether delivery is active |
+| `headers` | JSON | Custom headers to include in requests |
+| `description` | Text | Human-readable description |
+| `consecutiveFailures` | Integer | Count of consecutive failures |
+
+---
+
+## Performance characteristics
+
+| Component | Metric | Value |
+|---|---|---|
+| Event publishing | Throughput | ~500 events/sec |
+| Event broadcasting | Max concurrent subscribers | ~100 |
+| Webhook event queue | Concurrency | 5 |
+| Webhook endpoint queue | Concurrency | 10 |
+| Webhook delivery timeout | Per attempt | 3 minutes |
+| Retry delays | Attempt 2 / 3 | ~5s / ~10s |
+| End-to-end latency (publish to callback) | Typical | 20–100 ms |
+| End-to-end latency (publish to webhook delivery) | Typical | 200 ms – 5 s |
+
+---
+
+## Security model
+
+### Publisher authorization
+
+Only the component that declares an event in `blocklet.yml` is allowed to publish that event type. The `source` field is always set server-side to `BLOCKLET_COMPONENT_DID` and cannot be forged by the publishing component.
+
+### Subscriber filtering
+
+Any component mounted in the same app can subscribe to events, but self-emitted events are automatically filtered out by the SDK. There is no mechanism to subscribe to events from blocklets in other apps.
+
+### Channel naming
+
+EventBus channels follow the format `app:{appDid}:eventbus`. Access is scoped to the app's DID.

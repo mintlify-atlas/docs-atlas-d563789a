@@ -1,0 +1,327 @@
+---
+title: 'Browser SDK Reference (@blocklet/js-sdk)'
+description: 'API reference for @blocklet/js-sdk: BlockletSDK, window.blocklet context, createAxios, createFetch, AuthService, and browser-side session management.'
+---
+
+The `@blocklet/js-sdk` package is the browser-side companion to the Node.js SDK. It gives your frontend code access to the blocklet runtime context injected by Blocklet Server, provides session-aware HTTP helpers, and exposes services for user profile management, session handling, federated auth, and blocklet metadata — all without needing a direct connection to the server daemon.
+
+Unlike `@blocklet/sdk` (which runs in a Node.js process with full access to server internals), `@blocklet/js-sdk` is designed for client-side use and works with the data that Blocklet Server makes available to the browser.
+
+## Installation
+
+<CodeGroup>
+```bash npm
+npm install @blocklet/js-sdk
+```
+```bash yarn
+yarn add @blocklet/js-sdk
+```
+```bash pnpm
+pnpm add @blocklet/js-sdk
+```
+</CodeGroup>
+
+<Note>
+  `@blocklet/js-sdk` is an ES module package (`"type": "module"`). It requires a bundler (Vite, webpack, etc.) or a
+  runtime that supports ES module imports.
+</Note>
+
+## The `window.blocklet` object
+
+Blocklet Server injects a global `window.blocklet` object into every page served by a running blocklet. This object is the primary source of runtime context for browser code.
+
+```typescript
+interface WindowBlocklet {
+  // Server identity
+  serverDid: string;        // DID of the Blocklet Server instance
+  serverVersion: string;    // Version of the running Blocklet Server
+
+  // Blocklet / app identity
+  did: string;              // DID of this blocklet
+  appId: string;            // App ID (component-scoped)
+  appIds: string[];         // All app IDs in the chain
+  appPid: string;           // Permanent app ID (stable across upgrades)
+  appPk: string;            // App public key
+  appName: string;          // Human-readable app name
+  appDescription: string;   // App description
+  appLogo: string;          // Square logo URL
+  appLogoRect: string;      // Rectangular logo URL
+  appUrl: string;           // Public URL of this blocklet
+  webWalletUrl: string;     // URL of the associated web wallet
+
+  // Component context
+  isComponent: boolean;     // True if mounted as a component inside a parent blocklet
+  componentId: string;      // DID of this component (when isComponent is true)
+  componentMountPoints: TComponent[]; // All mounted component definitions
+
+  // Routing
+  prefix: string;           // URL prefix for this blocklet (e.g. "/my-app")
+  groupPrefix: string;      // Shared prefix for component groups
+  pageGroup: string;        // Page group identifier
+
+  // Runtime state
+  version: string;          // Blocklet version string
+  mode: string;             // Runtime mode
+  status: string;           // Current blocklet status
+  tenantMode: 'single' | 'multiple'; // Tenant configuration
+
+  // UI and UX
+  theme: TTheme;            // Active UI theme
+  navigation: TNavigationItem[];  // Navigation items configured by admin
+  preferences: Record<string, any>; // Blocklet preference values
+  languages: { code: string; name: string }[]; // Supported languages
+  passportColor: string;    // Color used for the passport UI element
+
+  // Trust
+  alsoKnownAs: string[];    // Alternative identifiers
+  trustedFactories: string[]; // Trusted factory DIDs
+
+  // Settings (federated auth, OAuth, sessions)
+  settings: BlockletSettings;
+  updatedAt: number;        // Unix timestamp of last update
+}
+```
+
+### Accessing window.blocklet
+
+```typescript
+// Direct access (always available in browser context)
+const { appName, appUrl, prefix, did } = window.blocklet;
+
+// Check if running as a component inside a parent blocklet
+if (window.blocklet.isComponent) {
+  console.log('Running as a component, parent prefix:', window.blocklet.groupPrefix);
+}
+
+// Read current theme
+const { theme } = window.blocklet;
+console.log('Primary color:', theme.primaryColor);
+```
+
+---
+
+## BlockletSDK class
+
+`BlockletSDK` is the main entry point. It wires together session-aware HTTP, user auth, token management, and blocklet services into a single object.
+
+```typescript
+import { BlockletSDK, getBlockletSDK } from '@blocklet/js-sdk';
+
+// Get the shared singleton instance (recommended)
+const sdk = getBlockletSDK();
+
+// Or create a dedicated instance
+const sdk = new BlockletSDK({
+  verifyFn: async (token) => {
+    // Optional: custom token verification
+    return true;
+  },
+});
+```
+
+### sdk.user — AuthService
+
+Provides user profile, privacy config, notification preferences, and social graph operations.
+
+```typescript
+// Get the public profile of any user
+const profile = await sdk.user.getUserPublicInfo({ did: 'z1abc...' });
+console.log(profile.name, profile.avatar);
+
+// Get the current user's full profile
+const myProfile = await sdk.user.getProfile();
+
+// Save profile updates
+await sdk.user.saveProfile({
+  locale: 'en',
+  metadata: { bio: 'Blocklet developer' },
+});
+
+// Follow / unfollow a user
+await sdk.user.followUser({ userDid: 'z1xyz...' });
+await sdk.user.unfollowUser({ userDid: 'z1xyz...' });
+
+// Check following status
+const isFollowing = await sdk.user.isFollowingUser({ userDid: 'z1xyz...' });
+
+// Log out the current session
+await sdk.user.logout({ visitorId: 'device-id-optional' });
+
+// Delete the current user account
+const { did } = await sdk.user.destroyMyself();
+```
+
+### sdk.blocklet — BlockletService
+
+Provides access to blocklet metadata, both from `window.blocklet` (synchronous) and from a remote URL (async with caching).
+
+```typescript
+// Synchronous access from window.blocklet
+const blocklet = sdk.blocklet.getBlocklet();
+console.log(blocklet.appName, blocklet.version);
+
+// Async fetch from a specific base URL (cached for 60 seconds)
+const remoteBlocklet = await sdk.blocklet.getBlocklet('https://other-app.example.com');
+
+// Get the URL prefix for this blocklet
+const prefix = sdk.blocklet.getPrefix();
+
+// Dynamically (re)load the __blocklet__.js script
+await sdk.blocklet.loadBlocklet();
+```
+
+### sdk.userSession — UserSessionService
+
+Manages user session state and session-based operations.
+
+```typescript
+// Refresh the current session
+await sdk.userSession.refresh();
+
+// Get current session information
+const session = await sdk.userSession.getSession();
+```
+
+### sdk.token — TokenService
+
+Manages session tokens and refresh tokens in browser storage.
+
+```typescript
+// Read the current session token
+const token = sdk.token.getSessionToken();
+
+// Read the current refresh token
+const refreshToken = sdk.token.getRefreshToken();
+
+// Manually clear tokens (e.g., on explicit logout)
+sdk.token.removeSessionToken();
+sdk.token.removeRefreshToken();
+```
+
+### sdk.federated — FederatedService
+
+Provides federated authentication across multiple blocklets.
+
+```typescript
+// Check trusted domains for federated auth
+const trustedDomains = await sdk.federated.getTrustedDomains();
+```
+
+### sdk.api — Axios instance
+
+A pre-configured Axios instance with automatic session token injection and token refresh. Deprecated in favor of `createAxios`.
+
+```typescript
+// Make an authenticated API call
+const { data } = await sdk.api.get('/api/my-endpoint');
+```
+
+---
+
+## createAxios
+
+Creates a standalone Axios instance with automatic session management. Use this instead of `sdk.api` for new code.
+
+```typescript
+import { createAxios } from '@blocklet/js-sdk';
+
+const api = createAxios(
+  { baseURL: 'https://api.example.com' },
+  {
+    // Optional: called when token refresh fails
+    onRefreshTokenError: () => {
+      window.location.href = '/login';
+    },
+  }
+);
+
+const { data } = await api.get('/api/users');
+```
+
+---
+
+## createFetch
+
+Creates a `fetch`-based request function with the same session management as `createAxios`.
+
+```typescript
+import { createFetch } from '@blocklet/js-sdk';
+
+const request = createFetch(
+  { credentials: 'include' },
+  {
+    onRefreshTokenError: () => {
+      console.error('Session expired');
+    },
+  }
+);
+
+const response = await request('/api/data');
+const data = await response.json();
+```
+
+---
+
+## getBlockletSDK
+
+`getBlockletSDK` returns the shared singleton `BlockletSDK` instance. Use this across your app to avoid creating multiple WebSocket connections and duplicate state.
+
+```typescript
+import { getBlockletSDK } from '@blocklet/js-sdk';
+
+// Always returns the same instance
+const sdk = getBlockletSDK();
+```
+
+---
+
+## CSRF utilities
+
+The SDK re-exports CSRF helpers for protecting form submissions.
+
+```typescript
+import { getCsrfToken, getCsrfHeader } from '@blocklet/js-sdk';
+
+// Get the CSRF token from the cookie
+const token = getCsrfToken();
+
+// Get the header object to attach to fetch requests
+const headers = getCsrfHeader();
+fetch('/api/submit', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', ...headers },
+  body: JSON.stringify({ data: 'value' }),
+});
+```
+
+---
+
+## Differences from @blocklet/sdk
+
+| | `@blocklet/js-sdk` | `@blocklet/sdk` |
+|---|---|---|
+| **Runtime** | Browser (ES module) | Node.js |
+| **Primary use** | Frontend UI code | Blocklet server-side code |
+| **Auth model** | Session tokens in browser storage | Server wallet + access keys |
+| **Data access** | `window.blocklet`, REST APIs | GraphQL internal API, NeDB |
+| **EventBus** | Not available | Available via `Notification` |
+| **Database** | Not available | `Database` (NeDB) |
+| **Install** | `npm install @blocklet/js-sdk` | `npm install @blocklet/sdk` |
+
+---
+
+## Complete exports reference
+
+| Export | Type | Description |
+|---|---|---|
+| `BlockletSDK` | Class | Main SDK class with all services |
+| `getBlockletSDK` | Function | Returns the shared singleton `BlockletSDK` |
+| `createAxios` | Function | Creates an Axios instance with session management |
+| `createFetch` | Function | Creates a fetch wrapper with session management |
+| `AuthService` | Class | User profile and social graph service |
+| `BlockletService` | Class | Blocklet metadata service |
+| `TokenService` | Class | Session and refresh token management |
+| `UserSessionService` | Class | User session state management |
+| `FederatedService` | Class | Federated authentication service |
+| `getCsrfToken` | Function | Returns the current CSRF token |
+| `getCsrfHeader` | Function | Returns CSRF header object for requests |

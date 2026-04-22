@@ -1,0 +1,150 @@
+---
+title: "blocklet dev start/remove — Control Dev Blocklets"
+description: "Start, stop, and remove blocklets running in development mode on a local Blocklet Server, including complete deletion with optional data retention."
+---
+
+When you run `blocklet dev`, the CLI installs your blocklet on the local Blocklet Server in development mode and starts it. The `blocklet dev install`, `blocklet dev remove`, and `blocklet delete` commands give you finer control over that lifecycle — installing without starting, tearing down the development session, or permanently deleting a blocklet and optionally its data.
+
+## `blocklet dev install`
+
+Registers the current directory's blocklet on the connected Blocklet Server in development mode without starting it. This is useful in CI or when you want to configure the blocklet before it runs.
+
+### Usage
+
+```bash
+blocklet dev install [options]
+```
+
+### Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--app-id <did>` | — | Install this blocklet as a component inside an existing app; provide the parent app's DID |
+| `--app-did <did>` | — | Deprecated alias for `--app-id` |
+| `--mount-point <mountPoint>` | — | URL path at which the component is mounted inside the parent app |
+| `--store-url <storeUrl>` | — | Default store URL used when a component's source store is not declared in `blocklet.yml` |
+| `--start-all-components` | `false` | Auto-start all components when the blocklet starts |
+
+### Example
+
+```bash
+# Install as a standalone app in dev mode (no start)
+blocklet dev install
+
+# Install as a component inside an existing app
+blocklet dev install --app-id zNKr34afd... --mount-point /my-tool
+```
+
+## `blocklet dev remove`
+
+Removes the current directory's blocklet from the connected Blocklet Server. Only works on blocklets running in development mode — production-mode blocklets are protected.
+
+### Usage
+
+```bash
+blocklet dev remove [options]
+```
+
+### Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--app-id <did>` | — | Remove this blocklet's component from the specified parent app |
+| `--app-did <did>` | — | Deprecated alias for `--app-id` |
+| `--mount-point <mountPoint>` | — | Mount point identifying which component to remove |
+| `--store-url <storeUrl>` | — | Default store URL used when a component's source store is not declared |
+| `--start-all-components` | `false` | (Inherited from parent `dev` command) |
+
+### Example
+
+```bash
+# Remove the dev-mode blocklet for the current directory
+blocklet dev remove
+
+# Remove a specific component from a parent app
+blocklet dev remove --app-id zNKr34afd...
+```
+
+<Warning>
+`blocklet dev remove` only removes blocklets installed in development mode. If you see an error about production mode, use `blocklet delete` instead.
+</Warning>
+
+## `blocklet dev reset`
+
+Clears all stored data and configuration for the blocklet without uninstalling it. Also aliased as `blocklet dev clear`.
+
+### Usage
+
+```bash
+blocklet dev reset [options]
+```
+
+### Options
+
+Accepts the same options as `blocklet dev remove` (`--app-id`, `--mount-point`, `--store-url`, `--start-all-components`).
+
+### Example
+
+```bash
+# Reset data for the current blocklet
+blocklet dev reset
+
+# Reset a specific component inside a parent app
+blocklet dev reset --app-id zNKr34afd...
+```
+
+<Note>
+You cannot reset a blocklet while it is in a transitional state (starting, stopping, etc.). Stop the blocklet first.
+</Note>
+
+## `blocklet delete`
+
+Permanently removes a blocklet from the Blocklet Server by its DID. Unlike `blocklet dev remove`, this command works on both development-mode and production-mode blocklets. Requires Blocklet Server to be running.
+
+### Usage
+
+```bash
+blocklet delete --app-did <did> [options]
+```
+
+### Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--app-did <did>` | _(required)_ | DID of the blocklet to delete |
+| `--keep-data` | `false` | Preserve blocklet data and configs on disk; only the running instance is removed |
+| `-y, --yes` | `false` | Skip the confirmation prompt |
+
+### Examples
+
+```bash
+# Delete a blocklet (prompts for confirmation)
+blocklet delete --app-did zNKr34afd...
+
+# Delete and keep data on disk
+blocklet delete --app-did zNKr34afd... --keep-data
+
+# Delete without confirmation (useful in CI)
+blocklet delete --app-did zNKr34afd... --yes
+```
+
+<Warning>
+Without `--keep-data`, `blocklet delete` permanently removes all blocklet data and cannot be undone. You will be prompted to confirm unless you pass `--yes`.
+</Warning>
+
+## Workflow overview
+
+<Steps>
+  <Step title="Start development">
+    Run `blocklet dev` from your project directory to install and start the blocklet in dev mode.
+  </Step>
+  <Step title="Iterate">
+    Edit your source code. The blocklet process reflects changes as you restart or trigger hot reload.
+  </Step>
+  <Step title="Stop development">
+    Press `Ctrl+C` in the `blocklet dev` terminal. The CLI disconnects and automatically removes the dev-mode instance.
+  </Step>
+  <Step title="Permanent removal">
+    To fully remove a blocklet from the server (including production instances), run `blocklet delete --app-did <did>`.
+  </Step>
+</Steps>

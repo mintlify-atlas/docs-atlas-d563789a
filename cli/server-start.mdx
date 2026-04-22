@@ -1,0 +1,87 @@
+---
+title: "blocklet server start — Start the server daemon"
+description: "Launch the Blocklet Server daemon and all associated processes, including the service gateway, event hub, and any configured auto-start blocklets."
+---
+
+`blocklet server start` reads the configuration from the nearest `.blocklet/config.yml`, runs any pending database migrations, starts the routing engine, and brings up the daemon and service processes via PM2. Once running, the command prints the URLs you can use to reach the admin dashboard and installed blocklets.
+
+## Usage
+
+```bash
+blocklet server start [options]
+```
+
+## Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-a, --auto-init` | `false` | If no config directory exists in the current folder, run `blocklet server init -f` automatically before starting |
+| `-u, --update-db` | — | Sync the database with the latest settings from `config.yml` when differences are detected |
+| `-m, --force-mode <mode>` | — | Override the server mode on startup; accepted values are `production`, `debug`, `maintenance`, and `serverless` |
+| `--routing <strategy>` | `system` | Routing rebuild strategy: `system` (fast, incremental) or `full` / `all` (complete rebuild) |
+| `--force-intranet` | `false` | Treat the server as intranet-only; ignore any external IP addresses |
+| `-k, --keep-alive` | `false` | Keep the CLI process running after the server has started successfully |
+| `--update-blocklet-env` | `false` | Update blocklet environment variables on start |
+
+## How it works
+
+<Steps>
+  <Step title="Reads configuration">
+    Locates `config.yml` by walking up from the current directory. Validates the CLI version against the version recorded in the config.
+  </Step>
+  <Step title="Runs migrations">
+    Executes any pending database schema migrations and application-level migration scripts before starting services.
+  </Step>
+  <Step title="Starts the event hub">
+    Launches the internal event bus used by the daemon, blocklets, and the service gateway to communicate.
+  </Step>
+  <Step title="Starts the service process">
+    Brings up the blocklet service process via PM2 and waits until its TCP port is healthy (up to 5 minutes).
+  </Step>
+  <Step title="Starts the daemon">
+    Brings up the main dashboard daemon via PM2 and waits until the daemon port responds (up to 5 minutes).
+  </Step>
+  <Step title="Prints access URLs">
+    Displays the URLs for the admin dashboard and any installed blocklets.
+  </Step>
+</Steps>
+
+## Examples
+
+```bash
+# Basic start (config directory must already exist)
+blocklet server start
+
+# Auto-initialize and start in one step
+blocklet server start --auto-init
+
+# Start and force the server into maintenance mode
+blocklet server start --force-mode maintenance
+
+# Start after editing config.yml to apply the new settings to the database
+blocklet server start --update-db
+
+# Do a full routing rebuild on startup
+blocklet server start --routing full
+
+# Treat the server as intranet-only
+blocklet server start --force-intranet
+```
+
+## Verifying that the server started
+
+After start, check the server is up with:
+
+```bash
+blocklet server status
+```
+
+If startup fails, the CLI prints the last 15 lines of the daemon error log and runs `blocklet server stop --force` automatically to clean up. You can re-run `blocklet server start` once the underlying issue is resolved.
+
+<Note>
+Only one Blocklet Server instance can run at a time per machine. If a running instance is detected from a different data directory, the CLI will prompt you to switch before starting.
+</Note>
+
+<Warning>
+The CLI version must be within the same major version as the version recorded in `config.yml`. Starting with a mismatched CLI version requires interactive confirmation and may cause unexpected behavior.
+</Warning>

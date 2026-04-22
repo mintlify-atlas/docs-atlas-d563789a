@@ -1,0 +1,95 @@
+---
+title: "blocklet add — Add a Component to a Blocklet"
+description: "Add a blocklet component from the Blocklet Store, a custom store URL, or a direct bundle URL into your blocklet's component registry."
+---
+
+The `blocklet add` command registers a component as a dependency in your blocklet's `blocklet.yml`. It fetches the component's metadata, validates it against the store or provided URL, and writes the component configuration — including name, title, mount point, and source — into your project file. Use this command when you are building a composite blocklet that depends on other blocklets as components.
+
+## Usage
+
+```bash
+blocklet add <component> [options]
+```
+
+The `<component>` argument accepts either a component name (resolved from a store), a versioned name in the form `name@version`, or a full URL pointing directly to a bundle manifest.
+
+## Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `<component>` | Component name, `name@version`, or a full URL to a `blocklet.json` manifest |
+
+## Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--profile <profile>` | `default` | Config profile to use when reading store and registry settings |
+| `--store <store>` | _(from config)_ | Which store to resolve the component from; falls back to config then `BLOCKLET_STORE_URL` |
+| `--title <title>` | _(from component meta)_ | Override the display title of the component |
+| `--mount-point <mountPoint>` | _(derived from name)_ | URL path at which the component is mounted inside the parent blocklet |
+
+## Specifying the component
+
+**By name (from a store)**
+
+When you pass a plain name, the CLI resolves the component from the configured store. You can pin a specific version using the `@version` suffix.
+
+```bash
+# Latest version from the default store
+blocklet add did:abt:z1muCMPAavHD8Cis5bpUwPEYLb9kLCfZsGj
+
+# Specific version
+blocklet add did:abt:z1muCMPAavHD8Cis5bpUwPEYLb9kLCfZsGj@1.2.0
+```
+
+**By direct URL**
+
+Pass any URL that starts with `http://` or `https://` and points to a `blocklet.json` manifest. The CLI bypasses store resolution and fetches the manifest directly.
+
+```bash
+blocklet add https://example.com/my-component/blocklet.json
+```
+
+## Examples
+
+```bash
+# Add a component from the default Blocklet Store
+blocklet add did:abt:z1muCMPAavHD8Cis5bpUwPEYLb9kLCfZsGj
+
+# Add from a specific store
+blocklet add my-component --store https://store.blocklet.dev
+
+# Add with a custom mount point and title
+blocklet add my-component --mount-point /tools --title "My Tool"
+
+# Add a pinned version from a custom store
+blocklet add my-component@2.0.0 --store https://private.store.example.com
+
+# Add directly from a bundle URL
+blocklet add https://releases.example.com/my-component/blocklet.json
+```
+
+## What happens
+
+When you run `blocklet add`, the CLI:
+
+1. Resolves the component — either from a store URL or a direct manifest URL.
+2. Validates that the component name or DID in the manifest matches what you requested.
+3. Checks the current `blocklet.yml` for circular dependencies.
+4. Appends the component entry (name, title, mount point, and source) to the `components` array in `blocklet.yml`.
+
+If the component is already listed in `blocklet.yml`, the command exits successfully without making changes.
+
+<Note>
+`blocklet add` modifies `blocklet.yml` in the current working directory. The component is not downloaded or installed until you run `blocklet dev` or `blocklet deploy`.
+</Note>
+
+## Removing a component
+
+To remove a component from `blocklet.yml`, use `blocklet remove`:
+
+```bash
+blocklet remove <component-name>
+```
+
+This removes the component entry from `blocklet.yml` but does not affect any running blocklet instances on a server.

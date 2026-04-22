@@ -1,0 +1,67 @@
+---
+title: "What is Blocklet Server? Platform Overview"
+description: "Blocklet Server is the managed runtime for Blocklet apps — it handles routing, auth, and lifecycle so operators can focus on deploying, not infrastructure."
+---
+
+Blocklet Server is to Blocklets what iOS is to iPhone apps: a standardized runtime environment that handles the hard parts of deploying and running applications. It sits between your infrastructure and your Blocklet apps, providing lifecycle management, nginx-based routing, DID authentication, a web dashboard, and Node.js and browser SDKs — so every Blocklet you run benefits from the same production-grade platform without extra configuration.
+
+## What Blocklet Server does
+
+<CardGroup cols={2}>
+  <Card title="Lifecycle management" icon="arrows-spin">
+    Install, start, stop, upgrade, and remove Blocklets with full state tracking. Rollback support means a bad deploy never leaves your server broken.
+  </Card>
+  <Card title="Smart routing" icon="route">
+    Nginx-based routing handles per-Blocklet domain management, SSL termination, and automatic configuration updates whenever you install or reconfigure a Blocklet.
+  </Card>
+  <Card title="DID authentication" icon="shield-check">
+    Decentralized identity (DID) authentication and role-based access control (RBAC) are built in. Every Blocklet inherits the server's auth layer automatically.
+  </Card>
+  <Card title="Web dashboard" icon="display">
+    A visual admin interface lets you manage Blocklets, view logs, inspect server status, and configure settings without touching the CLI.
+  </Card>
+  <Card title="Zero-downtime deploys" icon="circle-check">
+    Blue-green deployment ensures upgrades happen without dropping in-flight traffic, making production updates safe by default.
+  </Card>
+  <Card title="SDK support" icon="code">
+    `@blocklet/sdk` (Node.js) and `@blocklet/js-sdk` (browser) let Blocklet apps integrate with the server's authentication, notifications, and data APIs.
+  </Card>
+</CardGroup>
+
+## Who Blocklet Server is for
+
+Blocklet Server is designed for **operators** — teams and individuals who deploy and run Blocklet applications in production or development environments. If you are building a Blocklet (an application that runs on this platform), the SDKs and CLI are your primary interfaces. If you are running infrastructure that hosts Blocklets, Blocklet Server is the runtime you install.
+
+<Note>
+  Blocklet Server is licensed under Apache 2.0 and maintained by ArcBlock. The monorepo contains 40+ packages covering the CLI, dashboard, auth system, router, SDKs, and supporting utilities.
+</Note>
+
+## Key components
+
+The server is built as a monorepo with distinct layers:
+
+| Component | Package | Description |
+|-----------|---------|-------------|
+| CLI | `@blocklet/cli` | The `blocklet` command for managing servers and Blocklets |
+| Dashboard | `@abtnode/webapp` | React admin UI served at your server's root |
+| Auth | `@abtnode/auth` | DID-based authentication with JWT sessions |
+| Router | `@abtnode/router-provider` | Nginx configuration management |
+| Node.js SDK | `@blocklet/sdk` | Server-side integration APIs |
+| Browser SDK | `@blocklet/js-sdk` | Client-side integration APIs |
+
+## Explore further
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get Blocklet Server running in minutes using Docker or npm.
+  </Card>
+  <Card title="Installation" icon="download" href="/installation">
+    Full installation options: Docker, npm, and building from source.
+  </Card>
+  <Card title="Core concepts" icon="book" href="/concepts/architecture">
+    Understand the architecture, Blocklet lifecycle, routing, and authentication model.
+  </Card>
+  <Card title="CLI reference" icon="terminal" href="/cli/server-init">
+    Complete reference for the `blocklet` command-line interface.
+  </Card>
+</CardGroup>

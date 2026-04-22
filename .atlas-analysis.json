@@ -1,0 +1,112 @@
+{
+  "projectType": "saas",
+  "projectName": "Blocklet Server",
+  "projectDescription": "A standardized runtime platform for deploying, managing, and running Blocklet decentralized applications, with built-in authentication, routing, lifecycle management, and a web dashboard.",
+  "theme": "aspen",
+  "primaryColor": "#acacac",
+  "lightColor": "#424242",
+  "darkColor": "#dfdfdf",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/architecture",
+              "concepts/blocklet-lifecycle",
+              "concepts/routing",
+              "concepts/authentication"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/configuration",
+              "guides/managing-blocklets",
+              "guides/blue-green-deployment",
+              "guides/docker"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "reference/environment-variables",
+              "reference/node-sdk",
+              "reference/js-sdk",
+              "reference/event-system"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "CLI Reference",
+        "groups": [
+          {
+            "group": "Server Commands",
+            "pages": [
+              "cli/server-init",
+              "cli/server-start",
+              "cli/server-stop",
+              "cli/server-status"
+            ]
+          },
+          {
+            "group": "Blocklet Commands",
+            "pages": [
+              "cli/blocklet-install",
+              "cli/blocklet-start-stop",
+              "cli/blocklet-deploy",
+              "cli/blocklet-dev"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "DID-based authentication and identity management",
+    "Blocklet lifecycle management (install, start, stop, upgrade, remove)",
+    "Nginx-based request routing with automatic configuration",
+    "Role-based access control (RBAC) with team management",
+    "Blue-green zero-downtime deployment",
+    "GraphQL API for server and blocklet management",
+    "Web dashboard for visual administration",
+    "PM2-based process management for blocklets",
+    "Docker support for containerized blocklets",
+    "Event-driven architecture with lifecycle hooks",
+    "Automatic SSL certificate management",
+    "Node.js and browser SDKs for blocklet development"
+  ],
+  "publicApiSurface": [
+    "blocklet server init",
+    "blocklet server start",
+    "blocklet server stop",
+    "blocklet server status",
+    "blocklet install <url>",
+    "blocklet start <did>",
+    "blocklet stop <did>",
+    "blocklet deploy",
+    "blocklet dev",
+    "blocklet bundle",
+    "@blocklet/sdk - BlockletService",
+    "@blocklet/sdk - Notification",
+    "@blocklet/sdk - WalletAuthenticator",
+    "@blocklet/sdk - Database",
+    "@blocklet/sdk - Component",
+    "@blocklet/sdk - Security",
+    "@blocklet/sdk - middlewares",
+    "@blocklet/js-sdk - browser SDK",
+    "GraphQL API - blocklet queries/mutations",
+    "ABT_NODE_* environment variables"
+  ]
+}

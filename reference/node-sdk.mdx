@@ -1,0 +1,429 @@
+---
+title: 'Node.js SDK Reference for Blocklet Development'
+description: 'API reference for @blocklet/sdk: BlockletService, Notification, Database, Component, EventBus, WalletAuthenticator, and all server-side exports.'
+---
+
+The `@blocklet/sdk` package is the server-side SDK for blocklet development. It gives your Node.js backend access to the Blocklet Server runtime: user management, notifications, a built-in embedded database, inter-component communication, the EventBus, wallet authentication, and more. All APIs are designed to run inside a blocklet process where the `BLOCKLET_*` environment variables are already set by the runtime.
+
+## Installation
+
+<CodeGroup>
+```bash npm
+npm install @blocklet/sdk
+```
+```bash yarn
+yarn add @blocklet/sdk
+```
+```bash pnpm
+pnpm add @blocklet/sdk
+```
+</CodeGroup>
+
+## BlockletService
+
+`BlockletService` is the primary interface for interacting with the Blocklet Server runtime API over an internal GraphQL connection. It provides access to user management, RBAC, passport issuance, access keys, routing rules, and blocklet configuration.
+
+<Note>
+  `AuthService` and `Auth` are deprecated aliases for `BlockletService` retained for backward compatibility. Use
+  `BlockletService` in new code.
+</Note>
+
+```typescript
+import { BlockletService } from '@blocklet/sdk';
+
+const service = new BlockletService();
+
+// Fetch the current blocklet's metadata
+const { blocklet } = await service.getBlocklet();
+console.log(blocklet.name, blocklet.version);
+```
+
+### User management
+
+```typescript
+// Look up a user by DID
+const { user } = await service.getUser('z1abc...', {
+  enableConnectedAccount: true,
+  includeTags: true,
+});
+
+// List all users with pagination
+const { users, total } = await service.getUsers({ page: 1, pageSize: 20 });
+
+// Approve or reject a user
+await service.updateUserApproval('z1abc...', true);
+
+// Update user tags
+await service.updateUserTags({ did: 'z1abc...', tags: ['verified'] });
+```
+
+### Session management
+
+```typescript
+// Programmatic login (returns user + tokens)
+const { user, token, refreshToken } = await service.login({
+  did: 'z1abc...',
+  provider: 'wallet',
+});
+
+// Refresh an expired session using a refresh token
+const { user, token } = await service.refreshSession({
+  refreshToken: 'eyJ...',
+  visitorId: 'visitor-id-optional',
+});
+```
+
+### RBAC — roles and permissions
+
+```typescript
+// List all roles
+const { roles } = await service.getRoles();
+
+// Create a custom role
+const { role } = await service.createRole({
+  name: 'editor',
+  title: 'Editor',
+  description: 'Can create and edit content',
+});
+
+// Grant a permission to a role
+await service.grantPermissionForRole('editor', 'content:write');
+
+// Check whether a role has a permission
+const { hasPermission } = await service.hasPermission('editor', 'content:write');
+```
+
+### Passport management
+
+```typescript
+// Issue a passport to a user
+await service.issuePassportToUser({ did: 'z1abc...', name: 'member' });
+
+// Revoke a user's passport
+await service.revokeUserPassport({ did: 'z1abc...', name: 'member' });
+```
+
+### Blocklet configuration
+
+```typescript
+// Update blocklet preferences stored on the server
+await service.updatePreferences({ theme: 'dark', language: 'en' });
+
+// Add a custom routing rule
+await service.addRoutingRule({
+  path: '/api/v2',
+  target: 'https://api.example.com',
+});
+
+// Add a domain alias
+await service.addDomainAlias({ domain: 'app.example.com' });
+```
+
+### Access keys
+
+```typescript
+// Create a service-to-service access key
+const { accessKey } = await service.createAccessKey({
+  name: 'ci-deploy',
+  description: 'Used by CI pipeline',
+});
+
+// Verify an access key provided by a caller
+const { valid } = await service.verifyAccessKey({
+  accessKeyId: 'ak_...',
+  accessKeySecret: '...',
+});
+```
+
+### Social graph
+
+```typescript
+// Follow / unfollow (requires auth cookie in options)
+await service.followUser({ userDid: 'z1xyz...' });
+await service.unfollowUser({ userDid: 'z1xyz...' });
+
+// Retrieve followers (requires auth cookie)
+const { users } = await service.getUserFollowers(
+  { userDid: 'z1xyz...', page: 1, pageSize: 20 },
+  { headers: { cookie: req.headers.cookie } }
+);
+```
+
+---
+
+## Notification / NotificationService
+
+The `Notification` export (also available as `NotificationService`) connects to the Blocklet Server notification hub over a WebSocket and lets your blocklet send messages to users, broadcast to channels, and subscribe to internal lifecycle events.
+
+```typescript
+import { Notification } from '@blocklet/sdk';
+
+// Send a push notification to a specific user
+await Notification.sendToUser('z1abc...', {
+  title: 'Payment received',
+  body: 'Your payment of $10 has been confirmed.',
+  type: 'info',
+});
+
+// Broadcast a message to all connected clients in the app channel
+await Notification.broadcast({
+  title: 'Maintenance window',
+  body: 'The site will be down for 5 minutes.',
+});
+
+// Send an email notification
+await Notification.sendToMail('z1abc...', {
+  title: 'Welcome!',
+  body: 'Thanks for joining.',
+});
+
+// Relay an event to a relay topic
+await Notification.sendToRelay('orders', 'order.created', { orderId: '123' });
+
+// Subscribe to internal lifecycle events
+await Notification.on('login', (data) => {
+  console.log('User logged in:', data);
+});
+```
+
+---
+
+## EventBus
+
+`EventBus` (accessed through `Notification`) enables blocklet components to publish and subscribe to typed events within an app. Events must be declared in `blocklet.yml` before they can be published.
+
+```typescript
+import { Notification } from '@blocklet/sdk';
+
+// Publish a custom event declared in blocklet.yml
+await Notification.publish('order.created', {
+  data: {
+    object: {
+      orderId: 'order-123',
+      amount: 99.99,
+      currency: 'USD',
+    },
+  },
+});
+
+// Subscribe to events from other components
+await Notification.subscribe((event) => {
+  if (event.type === 'payment.confirmed') {
+    console.log('Payment confirmed:', event.data.object);
+  }
+});
+
+// Unsubscribe when done
+Notification.unsubscribe(myHandler);
+```
+
+<Note>
+  A blocklet component does not receive its own events — the SDK automatically filters out events whose `source`
+  matches `BLOCKLET_COMPONENT_DID`.
+</Note>
+
+---
+
+## Database
+
+`Database` is a persistent embedded datastore backed by [NeDB](https://github.com/nedbapp/nedb). It stores data in the blocklet's `BLOCKLET_DATA_DIR` directory and supports queries, pagination, and automatic compaction.
+
+```typescript
+import { Database } from '@blocklet/sdk';
+
+// Create a named collection
+const orders = new Database('orders');
+
+// Insert a document
+await orders.insert({ orderId: 'order-123', status: 'pending', total: 99.99 });
+
+// Find documents
+const pending = await orders.find({ status: 'pending' });
+
+// Paginate results
+const page1 = await orders.paginate({
+  condition: { status: 'pending' },
+  sort: { createdAt: -1 },
+  page: 1,
+  size: 20,
+});
+
+// Check existence
+const exists = await orders.exists({ orderId: 'order-123' });
+
+// Update a document
+await orders.update({ orderId: 'order-123' }, { $set: { status: 'confirmed' } }, {});
+
+// Remove documents
+await orders.remove({ status: 'cancelled' }, { multi: true });
+```
+
+<Warning>
+  `Database` requires `BLOCKLET_DATA_DIR` to be set in the environment. This variable is automatically injected by
+  the Blocklet Server runtime; it is not available outside of a running blocklet.
+</Warning>
+
+---
+
+## Component
+
+`Component` provides utilities for calling other components in the same app and for resolving their URLs and mount points.
+
+```typescript
+import { Component } from '@blocklet/sdk';
+
+// Call an API endpoint on another component
+const response = await Component.call({
+  name: 'payment-service', // component name, title, or DID
+  method: 'POST',
+  path: '/api/charge',
+  data: { amount: 99.99, currency: 'USD' },
+});
+
+// Get the full URL for a path within this component
+const url = Component.getUrl('/api/orders');
+
+// Get the relative mount-point path
+const relative = Component.getRelativeUrl('/api/orders');
+
+// Get the web endpoint of another component
+const endpoint = Component.getComponentWebEndpoint('payment-service');
+
+// Wait until a component's port is open (useful during startup)
+await Component.waitForComponentRunning('payment-service', 30000);
+```
+
+---
+
+## getWallet
+
+`getWallet` returns the blocklet's cryptographic wallet, which can be used for signing, DID operations, and creating access credentials.
+
+```typescript
+import { getWallet } from '@blocklet/sdk';
+
+const wallet = getWallet();
+console.log('Blocklet DID:', wallet.address);
+console.log('Public key:', wallet.publicKey);
+
+// Sign a JWT
+const token = await wallet.signJWT({ sub: 'some-subject' });
+```
+
+---
+
+## env (blockletEnv)
+
+`env` re-exports the `blockletEnv` object from `@blocklet/env`, which provides typed access to all `BLOCKLET_*` environment variables injected by the runtime.
+
+```typescript
+import { env } from '@blocklet/sdk';
+
+console.log(env.appId);          // BLOCKLET_APP_ID
+console.log(env.appPid);         // BLOCKLET_APP_PID
+console.log(env.appName);        // BLOCKLET_APP_NAME
+console.log(env.appUrl);         // BLOCKLET_APP_URL
+console.log(env.dataDir);        // BLOCKLET_DATA_DIR
+console.log(env.logDir);         // BLOCKLET_LOG_DIR
+console.log(env.mode);           // BLOCKLET_MODE: 'production' | 'development'
+```
+
+---
+
+## middlewares
+
+`middlewares` provides Express-compatible middleware for common blocklet server tasks.
+
+```typescript
+import express from 'express';
+import { middlewares } from '@blocklet/sdk';
+
+const app = express();
+app.use(middlewares.session());
+app.use(middlewares.auth());
+```
+
+---
+
+## Security
+
+`Security` provides utilities for verifying vault secrets and other security-related operations.
+
+```typescript
+import { Security } from '@blocklet/sdk';
+
+// Use Security utilities for sensitive operations
+const vault = await Security.getVault();
+```
+
+---
+
+## config
+
+`config` exposes the current blocklet's runtime configuration, including mounted component definitions.
+
+```typescript
+import { config } from '@blocklet/sdk';
+
+// Access the list of mounted components
+const components = config.components;
+console.log('Mounted components:', components.map((c) => c.name));
+```
+
+---
+
+## WalletAuthenticator and WalletHandlers
+
+These classes integrate [DID Connect](https://github.com/ArcBlock/did-connect) wallet-based authentication flows into an Express app.
+
+```typescript
+import { WalletAuthenticator, WalletHandlers } from '@blocklet/sdk';
+
+const authenticator = new WalletAuthenticator();
+const handlers = new WalletHandlers({
+  authenticator,
+  tokenGenerator: (params) => params.did,
+});
+
+// Mount DID Connect endpoints
+app.use('/api/did', handlers.attach(app, { prefix: '/api/did' }));
+```
+
+---
+
+## BlockletAuthenticator and createConnectHandlers
+
+`BlockletAuthenticator` and `createConnectHandlers` provide higher-level authentication wiring for blocklet-to-blocklet auth.
+
+```typescript
+import { BlockletAuthenticator, createConnectHandlers } from '@blocklet/sdk';
+
+const authenticator = new BlockletAuthenticator();
+const handlers = createConnectHandlers({ authenticator });
+
+app.use('/api/auth', handlers);
+```
+
+---
+
+## Complete exports reference
+
+| Export | Type | Description |
+|---|---|---|
+| `BlockletService` | Class | Server-side runtime API (users, RBAC, routing, config) |
+| `AuthService` | Class | Deprecated alias for `BlockletService` |
+| `Auth` | Class | Deprecated alias for `BlockletService` |
+| `Notification` | Object | Send notifications, subscribe to events, EventBus |
+| `NotificationService` | Object | Alias for `Notification` |
+| `Database` | Class | Embedded NeDB-backed persistent datastore |
+| `Component` | Object | Inter-component communication and URL resolution |
+| `component` | Object | Alias for `Component` |
+| `getWallet` | Function | Returns the blocklet's cryptographic wallet |
+| `env` | Object | Typed access to `BLOCKLET_*` environment variables |
+| `middlewares` | Object | Express middleware for session and auth |
+| `Security` | Object | Vault and security utilities |
+| `config` | Object | Blocklet runtime configuration |
+| `WalletAuthenticator` | Class | DID Connect wallet authenticator |
+| `WalletHandlers` | Class | DID Connect request handlers |
+| `BlockletAuthenticator` | Class | Blocklet-to-blocklet authentication |
+| `createConnectHandlers` | Function | Factory for blocklet connect handler middleware |
